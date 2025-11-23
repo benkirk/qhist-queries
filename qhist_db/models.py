@@ -9,11 +9,13 @@ Base = declarative_base()
 class JobMixin:
     """Mixin class defining common job fields for Casper and Derecho tables."""
 
-    # Primary key - unique job identifier per machine
-    short_id = Column(Integer, primary_key=True, autoincrement=False)
+    # Primary key - full job ID including array index (e.g., "6049117[28]")
+    id = Column(Text, primary_key=True)
+
+    # Base job ID as integer for efficient queries (array index stripped)
+    short_id = Column(Integer, index=True)
 
     # Job identification
-    id = Column(Text, index=True)
     name = Column(Text)
     user = Column(Text, index=True)
     account = Column(Text, index=True)

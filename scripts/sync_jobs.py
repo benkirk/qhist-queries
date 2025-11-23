@@ -131,6 +131,7 @@ def main():
             end_date=end_date,
             dry_run=args.dry_run,
             batch_size=args.batch_size,
+            verbose=args.verbose,
         )
 
         # Print results

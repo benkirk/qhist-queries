@@ -6,7 +6,7 @@ This document describes the database schema for storing historical job data from
 
 - **Database**: SQLite (`data/qhist.db`)
 - **Tables**: `casper_jobs`, `derecho_jobs` (identical structure, separate epochs)
-- **Primary Key**: `short_id` (INTEGER) - unique job identifier per machine
+- **Primary Key**: `id` (TEXT) - full job ID including array index (e.g., "6049117[28]")
 - **Timestamps**: Stored in UTC
 
 ## Design Decisions
@@ -17,18 +17,16 @@ Casper and Derecho have independent job numbering systems ("epochs"). While `sho
 
 - Avoids the need for composite keys
 - Optimizes queries that target a single machine
-- Leverages SQLite's INTEGER PRIMARY KEY optimization (direct rowid mapping)
 
 ### Primary Key Choice
 
-`short_id` (INTEGER) was chosen over `id` (TEXT) because:
+`id` (TEXT) is used as the primary key because:
 
-- SQLite optimizes INTEGER PRIMARY KEY as the internal rowid
-- Faster comparisons and index lookups
-- Smaller storage footprint
-- Natural duplicate detection during sync operations
+- Job arrays produce multiple jobs with IDs like `6049117[0]`, `6049117[1]`, etc.
+- Each array element is a separate job with its own resources and timing
+- Using the full ID (with array index) ensures uniqueness
 
-The full `id` string is retained as an indexed column for reference.
+`short_id` (INTEGER) stores just the base job number (without array index) for efficient queries and grouping array jobs together.
 
 ### Timestamp Handling
 
@@ -40,8 +38,8 @@ All timestamps are converted to UTC before storage for consistency, regardless o
 
 | Column | Type | Nullable | Index | Description |
 |--------|------|----------|-------|-------------|
-| `short_id` | INTEGER | NO | PK | Unique job identifier |
-| `id` | TEXT | YES | YES | Full job ID string |
+| `id` | TEXT | NO | PK | Full job ID including array index (e.g., "6049117[28]") |
+| `short_id` | INTEGER | YES | YES | Base job ID (array index stripped) for queries |
 | `name` | TEXT | YES | NO | Job name |
 | `user` | TEXT | YES | YES | Username who submitted the job |
 | `account` | TEXT | YES | YES | Account/allocation charged |

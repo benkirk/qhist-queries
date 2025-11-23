@@ -2,7 +2,7 @@
 
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Iterator
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -30,6 +30,25 @@ INTEGER_FIELDS = {
 
 # Fields that should be floats
 FLOAT_FIELDS = {"cpupercent", "avgcpu"}
+
+
+def date_range(start_date: str, end_date: str) -> Iterator[str]:
+    """Iterate through dates from start to end (inclusive).
+
+    Args:
+        start_date: Start date in YYYYMMDD format
+        end_date: End date in YYYYMMDD format
+
+    Yields:
+        Date strings in YYYYMMDD format
+    """
+    start = datetime.strptime(start_date, "%Y%m%d")
+    end = datetime.strptime(end_date, "%Y%m%d")
+
+    current = start
+    while current <= end:
+        yield current.strftime("%Y%m%d")
+        current += timedelta(days=1)
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
@@ -82,6 +101,23 @@ def parse_int(value) -> int | None:
         return None
 
 
+def parse_job_id(value) -> int | None:
+    """Parse a job ID, handling array job format like '6049117[28]'.
+
+    For array jobs, extracts the base job ID before the bracket.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        # Handle array job IDs like "6049117[28]"
+        str_val = str(value)
+        if "[" in str_val:
+            str_val = str_val.split("[")[0]
+        return int(str_val)
+    except (ValueError, TypeError):
+        return None
+
+
 def parse_float(value) -> float | None:
     """Safely parse a float value."""
     if value is None or value == "":
@@ -95,24 +131,97 @@ def parse_float(value) -> float | None:
 def parse_job_record(record: dict) -> dict:
     """Parse and normalize a job record from qhist JSON output.
 
+    The qhist JSON has a nested structure that needs to be flattened
+    to match our database schema.
+
     Args:
         record: Raw job record dictionary from qhist
 
     Returns:
-        Normalized record with proper types
+        Normalized record with proper types matching database schema
     """
-    result = {}
+    resource_list = record.get("Resource_List", {})
+    resources_used = record.get("resources_used", {})
 
-    for key, value in record.items():
-        if key in TIMESTAMP_FIELDS:
-            result[key] = parse_timestamp(value)
-        elif key in INTEGER_FIELDS:
-            result[key] = parse_int(value)
-        elif key in FLOAT_FIELDS:
-            result[key] = parse_float(value)
-        else:
-            # Text fields - store as-is, but convert empty to None
-            result[key] = value if value else None
+    # Parse the select string for mpiprocs and ompthreads
+    select_str = resource_list.get("select", "")
+    mpiprocs = None
+    ompthreads = None
+    if select_str:
+        for part in select_str.split(":"):
+            if part.startswith("mpiprocs="):
+                mpiprocs = parse_int(part.split("=")[1])
+            elif part.startswith("ompthreads="):
+                ompthreads = parse_int(part.split("=")[1])
+
+    # Convert hours to seconds for time fields
+    def hours_to_seconds(val):
+        if val is None:
+            return None
+        try:
+            return int(float(val) * 3600)
+        except (ValueError, TypeError):
+            return None
+
+    # Convert GB to bytes for memory fields
+    def gb_to_bytes(val):
+        if val is None:
+            return None
+        try:
+            return int(float(val) * 1024 * 1024 * 1024)
+        except (ValueError, TypeError):
+            return None
+
+    # Get the short_id which may include array index like "6049117[28]"
+    raw_short_id = record.get("short_id", "")
+
+    result = {
+        # Job identification - id is the full identifier (primary key)
+        "id": raw_short_id,
+        # short_id is just the base job number for efficient queries
+        "short_id": parse_job_id(raw_short_id),
+        "name": record.get("jobname"),
+        "user": record.get("user"),
+        "account": record.get("account"),
+
+        # Queue and status
+        "queue": record.get("queue"),
+        "status": record.get("Exit_status"),
+
+        # Timestamps (ctime=submit, etime=eligible, start, end)
+        "submit": parse_timestamp(record.get("ctime")),
+        "eligible": parse_timestamp(record.get("etime")),
+        "start": parse_timestamp(record.get("start")),
+        "end": parse_timestamp(record.get("end")),
+
+        # Time metrics (convert from hours to seconds)
+        "elapsed": hours_to_seconds(resources_used.get("walltime")),
+        "walltime": hours_to_seconds(resource_list.get("walltime")),
+        "cputime": hours_to_seconds(resources_used.get("cput")),
+
+        # Resource allocation
+        "numcpus": parse_int(resource_list.get("ncpus")),
+        "numgpus": parse_int(resource_list.get("ngpus")),
+        "numnodes": parse_int(resource_list.get("nodect")),
+        "mpiprocs": mpiprocs,
+        "ompthreads": ompthreads,
+
+        # Memory (convert from GB to bytes)
+        "reqmem": gb_to_bytes(resource_list.get("mem")),
+        "memory": gb_to_bytes(resources_used.get("mem")),
+        "vmemory": gb_to_bytes(resources_used.get("vmem")),
+
+        # Resource types (not available in JSON, set to None)
+        "cputype": None,
+        "gputype": None,
+        "resources": resource_list.get("select"),
+        "ptargets": resource_list.get("preempt_targets"),
+
+        # Performance metrics
+        "cpupercent": parse_float(resources_used.get("cpupercent")),
+        "avgcpu": parse_float(resources_used.get("avgcpu")),
+        "count": parse_int(record.get("run_count")),
+    }
 
     return result
 
@@ -135,16 +244,19 @@ def fetch_jobs_ssh(
         Parsed job record dictionaries
     """
     # Build the qhist command
-    cmd = ["ssh", machine, "qhist", "--json", f"--format={ALL_FIELDS}"]
+    # qhist uses -p/--period with format: YYYYMMDD for single day, YYYYMMDD-YYYYMMDD for range
+    cmd = ["ssh", machine, "qhist", "-J", f"-f={ALL_FIELDS}"]
 
     if period:
-        cmd.extend(["--period", period])
+        cmd.extend(["-p", period])
     elif start_date and end_date:
-        cmd.extend(["--start", start_date, "--end", end_date])
+        cmd.extend(["-p", f"{start_date}-{end_date}"])
     elif start_date:
-        cmd.extend(["--start", start_date])
+        # From start_date to today
+        cmd.extend(["-p", f"{start_date}-"])
     elif end_date:
-        cmd.extend(["--end", end_date])
+        # Up to end_date (use days parameter instead)
+        cmd.extend(["-p", end_date])
 
     # Run the command
     result = subprocess.run(cmd, capture_output=True, text=True)
@@ -152,16 +264,18 @@ def fetch_jobs_ssh(
     if result.returncode != 0:
         raise RuntimeError(f"qhist command failed: {result.stderr}")
 
-    # Parse JSON output - qhist outputs one JSON object per line
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        try:
-            record = json.loads(line)
-            yield parse_job_record(record)
-        except json.JSONDecodeError:
-            # Skip malformed lines
-            continue
+    # Parse JSON output - qhist outputs a single JSON object with nested Jobs
+    # Structure: { "timestamp": ..., "Jobs": { "jobid": {...}, ... } }
+    if not result.stdout.strip():
+        return
+
+    try:
+        data = json.loads(result.stdout)
+        jobs = data.get("Jobs", {})
+        for job_id, job_data in jobs.items():
+            yield parse_job_record(job_data)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Failed to parse qhist JSON output: {e}")
 
 
 def sync_jobs(
@@ -196,12 +310,12 @@ def sync_jobs(
 
         try:
             # Check if record already exists
-            short_id = record.get("short_id")
-            if short_id is None:
+            job_id = record.get("id")
+            if not job_id:
                 stats["errors"] += 1
                 continue
 
-            existing = session.query(model).filter_by(short_id=short_id).first()
+            existing = session.query(model).filter_by(id=job_id).first()
 
             if existing:
                 stats["skipped"] += 1
@@ -212,7 +326,7 @@ def sync_jobs(
 
         except Exception as e:
             stats["errors"] += 1
-            print(f"Error processing record {record.get('short_id')}: {e}")
+            print(f"Error processing record {record.get('id')}: {e}")
 
     if not dry_run:
         session.commit()
@@ -228,10 +342,13 @@ def sync_jobs_bulk(
     end_date: str | None = None,
     dry_run: bool = False,
     batch_size: int = 1000,
+    verbose: bool = False,
 ) -> dict:
     """Sync job records using bulk insert for better performance.
 
     Uses INSERT OR IGNORE for efficient duplicate handling.
+    When a date range is specified, queries one day at a time to avoid
+    overwhelming the remote system with large result sets.
 
     Args:
         session: SQLAlchemy session
@@ -241,6 +358,7 @@ def sync_jobs_bulk(
         end_date: End date for range (YYYYMMDD)
         dry_run: If True, don't actually insert records
         batch_size: Number of records to insert per batch
+        verbose: If True, print progress for each day
 
     Returns:
         Dictionary with sync statistics
@@ -248,12 +366,56 @@ def sync_jobs_bulk(
     model = get_model_for_machine(machine)
     stats = {"fetched": 0, "inserted": 0, "errors": 0}
 
+    # If date range specified, loop one day at a time
+    if start_date and end_date:
+        for day in date_range(start_date, end_date):
+            if verbose:
+                print(f"  Fetching {day}...", end=" ", flush=True)
+            day_stats = _sync_single_day(session, model, machine, day, dry_run, batch_size)
+            stats["fetched"] += day_stats["fetched"]
+            stats["inserted"] += day_stats["inserted"]
+            stats["errors"] += day_stats["errors"]
+            if verbose:
+                print(f"{day_stats['fetched']} jobs, {day_stats['inserted']} new")
+    else:
+        # Single day or no date specified
+        target_period = period or start_date or end_date
+        day_stats = _sync_single_day(session, model, machine, target_period, dry_run, batch_size)
+        stats["fetched"] = day_stats["fetched"]
+        stats["inserted"] = day_stats["inserted"]
+        stats["errors"] = day_stats["errors"]
+
+    return stats
+
+
+def _sync_single_day(
+    session: Session,
+    model,
+    machine: str,
+    period: str | None,
+    dry_run: bool,
+    batch_size: int,
+) -> dict:
+    """Sync jobs for a single day.
+
+    Args:
+        session: SQLAlchemy session
+        model: SQLAlchemy model class
+        machine: Machine name
+        period: Date in YYYYMMDD format
+        dry_run: If True, don't insert
+        batch_size: Batch size for inserts
+
+    Returns:
+        Dictionary with sync statistics for this day
+    """
+    stats = {"fetched": 0, "inserted": 0, "errors": 0}
     batch = []
 
-    for record in fetch_jobs_ssh(machine, period, start_date, end_date):
+    for record in fetch_jobs_ssh(machine, period=period):
         stats["fetched"] += 1
 
-        if record.get("short_id") is None:
+        if not record.get("id"):
             stats["errors"] += 1
             continue
 
@@ -284,7 +446,7 @@ def _insert_batch(session: Session, model, records: list[dict]) -> int:
 
     # Use SQLite's INSERT OR IGNORE via on_conflict_do_nothing
     stmt = sqlite_insert(model.__table__).values(records)
-    stmt = stmt.on_conflict_do_nothing(index_elements=["short_id"])
+    stmt = stmt.on_conflict_do_nothing(index_elements=["id"])
 
     result = session.execute(stmt)
     session.commit()
