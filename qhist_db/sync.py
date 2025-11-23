@@ -8,7 +8,7 @@ from typing import Iterator
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
-from .models import MACHINE_MODELS, get_model_for_machine
+from .models import Job
 
 # All available fields from qhist
 ALL_FIELDS = (
@@ -299,7 +299,6 @@ def sync_jobs(
     Returns:
         Dictionary with sync statistics
     """
-    model = get_model_for_machine(machine)
     stats = {"fetched": 0, "inserted": 0, "skipped": 0, "errors": 0}
 
     for record in fetch_jobs_ssh(machine, period, start_date, end_date):
@@ -315,12 +314,12 @@ def sync_jobs(
                 stats["errors"] += 1
                 continue
 
-            existing = session.query(model).filter_by(id=job_id).first()
+            existing = session.query(Job).filter_by(id=job_id).first()
 
             if existing:
                 stats["skipped"] += 1
             else:
-                job = model(**record)
+                job = Job(**record)
                 session.add(job)
                 stats["inserted"] += 1
 
@@ -363,7 +362,6 @@ def sync_jobs_bulk(
     Returns:
         Dictionary with sync statistics
     """
-    model = get_model_for_machine(machine)
     stats = {"fetched": 0, "inserted": 0, "errors": 0}
 
     # If date range specified, loop one day at a time
@@ -371,7 +369,7 @@ def sync_jobs_bulk(
         for day in date_range(start_date, end_date):
             if verbose:
                 print(f"  Fetching {day}...", end=" ", flush=True)
-            day_stats = _sync_single_day(session, model, machine, day, dry_run, batch_size)
+            day_stats = _sync_single_day(session, machine, day, dry_run, batch_size)
             stats["fetched"] += day_stats["fetched"]
             stats["inserted"] += day_stats["inserted"]
             stats["errors"] += day_stats["errors"]
@@ -380,7 +378,7 @@ def sync_jobs_bulk(
     else:
         # Single day or no date specified
         target_period = period or start_date or end_date
-        day_stats = _sync_single_day(session, model, machine, target_period, dry_run, batch_size)
+        day_stats = _sync_single_day(session, machine, target_period, dry_run, batch_size)
         stats["fetched"] = day_stats["fetched"]
         stats["inserted"] = day_stats["inserted"]
         stats["errors"] = day_stats["errors"]
@@ -390,7 +388,6 @@ def sync_jobs_bulk(
 
 def _sync_single_day(
     session: Session,
-    model,
     machine: str,
     period: str | None,
     dry_run: bool,
@@ -400,7 +397,6 @@ def _sync_single_day(
 
     Args:
         session: SQLAlchemy session
-        model: SQLAlchemy model class
         machine: Machine name
         period: Date in YYYYMMDD format
         dry_run: If True, don't insert
@@ -423,19 +419,19 @@ def _sync_single_day(
 
         if len(batch) >= batch_size:
             if not dry_run:
-                inserted = _insert_batch(session, model, batch)
+                inserted = _insert_batch(session, batch)
                 stats["inserted"] += inserted
             batch = []
 
     # Insert remaining records
     if batch and not dry_run:
-        inserted = _insert_batch(session, model, batch)
+        inserted = _insert_batch(session, batch)
         stats["inserted"] += inserted
 
     return stats
 
 
-def _insert_batch(session: Session, model, records: list[dict]) -> int:
+def _insert_batch(session: Session, records: list[dict]) -> int:
     """Insert a batch of records, ignoring duplicates.
 
     Returns:
@@ -445,7 +441,7 @@ def _insert_batch(session: Session, model, records: list[dict]) -> int:
         return 0
 
     # Use SQLite's INSERT OR IGNORE via on_conflict_do_nothing
-    stmt = sqlite_insert(model.__table__).values(records)
+    stmt = sqlite_insert(Job.__table__).values(records)
     stmt = stmt.on_conflict_do_nothing(index_elements=["id"])
 
     result = session.execute(stmt)

@@ -1,13 +1,13 @@
 """QHist Database - SQLAlchemy ORM for HPC job history data."""
 
-from .database import get_engine, get_session, init_db
-from .models import CasperJob, DerechoJob, JobMixin
+from .database import get_db_path, get_engine, get_session, init_db, VALID_MACHINES
+from .models import Job
 
 __all__ = [
+    "get_db_path",
     "get_engine",
     "get_session",
     "init_db",
-    "CasperJob",
-    "DerechoJob",
-    "JobMixin",
+    "Job",
+    "VALID_MACHINES",
 ]

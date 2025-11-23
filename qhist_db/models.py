@@ -1,13 +1,18 @@
 """SQLAlchemy ORM models for HPC job history data."""
 
 from sqlalchemy import BigInteger, Column, DateTime, Float, Index, Integer, Text
-from sqlalchemy.orm import declarative_base, declared_attr
+from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
 
-class JobMixin:
-    """Mixin class defining common job fields for Casper and Derecho tables."""
+class Job(Base):
+    """Job record from an HPC cluster.
+
+    Each machine (casper, derecho) has its own database file with a 'jobs' table.
+    """
+
+    __tablename__ = "jobs"
 
     # Primary key - full job ID including array index (e.g., "6049117[28]")
     id = Column(Text, primary_key=True)
@@ -58,58 +63,19 @@ class JobMixin:
     avgcpu = Column(Float)
     count = Column(Integer)
 
-    @declared_attr
-    def __table_args__(cls):
-        return (
-            # Existing composite indexes
-            Index(f"ix_{cls.__tablename__}_user_account", "user", "account"),
-            Index(f"ix_{cls.__tablename__}_submit_end", "submit", "end"),
-            # Date-filtered aggregation indexes
-            Index(f"ix_{cls.__tablename__}_user_submit", "user", "submit"),
-            Index(f"ix_{cls.__tablename__}_account_submit", "account", "submit"),
-            Index(f"ix_{cls.__tablename__}_queue_submit", "queue", "submit"),
-        )
+    __table_args__ = (
+        # Existing composite indexes
+        Index("ix_jobs_user_account", "user", "account"),
+        Index("ix_jobs_submit_end", "submit", "end"),
+        # Date-filtered aggregation indexes
+        Index("ix_jobs_user_submit", "user", "submit"),
+        Index("ix_jobs_account_submit", "account", "submit"),
+        Index("ix_jobs_queue_submit", "queue", "submit"),
+    )
 
     def __repr__(self):
-        return f"<{self.__class__.__name__}(short_id={self.short_id}, user='{self.user}', status='{self.status}')>"
+        return f"<Job(id='{self.id}', user='{self.user}', status='{self.status}')>"
 
     def to_dict(self):
         """Convert job record to dictionary."""
         return {c.name: getattr(self, c.name) for c in self.__table__.columns}
-
-
-class CasperJob(JobMixin, Base):
-    """Job records from the Casper cluster."""
-
-    __tablename__ = "casper_jobs"
-
-
-class DerechoJob(JobMixin, Base):
-    """Job records from the Derecho cluster."""
-
-    __tablename__ = "derecho_jobs"
-
-
-# Mapping of machine names to model classes
-MACHINE_MODELS = {
-    "casper": CasperJob,
-    "derecho": DerechoJob,
-}
-
-
-def get_model_for_machine(machine: str):
-    """Get the appropriate model class for a machine name.
-
-    Args:
-        machine: Machine name ('casper' or 'derecho')
-
-    Returns:
-        The corresponding SQLAlchemy model class
-
-    Raises:
-        ValueError: If machine name is not recognized
-    """
-    machine = machine.lower()
-    if machine not in MACHINE_MODELS:
-        raise ValueError(f"Unknown machine: {machine}. Must be one of: {list(MACHINE_MODELS.keys())}")
-    return MACHINE_MODELS[machine]

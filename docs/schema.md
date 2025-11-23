@@ -4,19 +4,23 @@ This document describes the database schema for storing historical job data from
 
 ## Overview
 
-- **Database**: SQLite (`data/qhist.db`)
-- **Tables**: `casper_jobs`, `derecho_jobs` (identical structure, separate epochs)
+- **Databases**: Separate SQLite files per machine
+  - `data/casper.db` - Casper cluster jobs
+  - `data/derecho.db` - Derecho cluster jobs
+- **Table**: `jobs` (same schema in each database)
 - **Primary Key**: `id` (TEXT) - full job ID including array index (e.g., "6049117[28]")
 - **Timestamps**: Stored in UTC
 
 ## Design Decisions
 
-### Separate Tables for Each Machine
+### Separate Database Files per Machine
 
-Casper and Derecho have independent job numbering systems ("epochs"). While `short_id` values may occasionally overlap between machines, using separate tables:
+Casper and Derecho have independent job numbering systems ("epochs"). Using separate database files:
 
-- Avoids the need for composite keys
-- Optimizes queries that target a single machine
+- Enables independent backup/archive per machine
+- Keeps individual databases smaller and more manageable
+- Allows parallel sync operations without conflicts
+- Easy to drop old data or archive by machine
 
 ### Primary Key Choice
 
@@ -34,7 +38,7 @@ All timestamps are converted to UTC before storage for consistency, regardless o
 
 ## Schema Definition
 
-### casper_jobs / derecho_jobs
+### jobs table
 
 | Column | Type | Nullable | Index | Description |
 |--------|------|----------|-------|-------------|

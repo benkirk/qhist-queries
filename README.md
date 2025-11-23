@@ -4,9 +4,10 @@ A SQLite database and Python toolkit for collecting and analyzing historical job
 
 ## Overview
 
-This project fetches job history from HPC systems via the `qhist` command over SSH, stores records in a local SQLite database, and provides a foundation for usage analysis.
+This project fetches job history from HPC systems via the `qhist` command over SSH, stores records in local SQLite databases, and provides a foundation for usage analysis.
 
 **Features:**
+- Separate database file per machine for easy management
 - SQLAlchemy ORM models for job records
 - Bulk sync with duplicate detection
 - Handles job arrays (e.g., `6049117[28]`)
@@ -15,7 +16,7 @@ This project fetches job history from HPC systems via the `qhist` command over S
 ## Quick Start
 
 ```bash
-# Initialize the database
+# Initialize databases (creates both casper.db and derecho.db)
 make init-db
 
 # Sync jobs for a specific date
@@ -31,7 +32,7 @@ make sync-all START=20250801 END=20250831
 ```
 qhist-queries/
 ├── qhist_db/              # Python package
-│   ├── models.py          # SQLAlchemy ORM (CasperJob, DerechoJob)
+│   ├── models.py          # SQLAlchemy ORM (Job class)
 │   ├── database.py        # Engine/session management
 │   └── sync.py            # SSH fetch and bulk insert
 ├── scripts/
@@ -39,13 +40,14 @@ qhist-queries/
 ├── docs/
 │   └── schema.md          # Database schema documentation
 ├── data/
-│   └── qhist.db           # SQLite database (gitignored)
+│   ├── casper.db          # Casper jobs (gitignored)
+│   └── derecho.db         # Derecho jobs (gitignored)
 └── Makefile               # Convenience targets
 ```
 
 ## Database Schema
 
-Two tables with identical structure: `casper_jobs` and `derecho_jobs`
+Each machine has its own database file with a `jobs` table:
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -70,10 +72,18 @@ See [docs/schema.md](docs/schema.md) for the complete schema.
 
 ## Example Queries
 
+```bash
+# Query Derecho jobs
+sqlite3 data/derecho.db "SELECT user, COUNT(*) as jobs FROM jobs GROUP BY user LIMIT 10;"
+
+# Query Casper jobs
+sqlite3 data/casper.db "SELECT queue, COUNT(*) FROM jobs GROUP BY queue;"
+```
+
 ```sql
--- Jobs by user for August 2025
+-- Jobs by user for August 2025 (run against derecho.db)
 SELECT user, COUNT(*) as jobs, SUM(elapsed)/3600.0 as total_hours
-FROM derecho_jobs
+FROM jobs
 WHERE submit >= '2025-08-01' AND submit < '2025-09-01'
 GROUP BY user
 ORDER BY total_hours DESC
@@ -82,14 +92,14 @@ LIMIT 10;
 -- Average wait time by queue
 SELECT queue,
        AVG(strftime('%s', start) - strftime('%s', submit))/60.0 as avg_wait_min
-FROM casper_jobs
+FROM jobs
 WHERE start IS NOT NULL AND submit IS NOT NULL
 GROUP BY queue;
 
 -- Memory efficiency (used vs requested)
 SELECT user,
        AVG(CAST(memory AS REAL) / NULLIF(reqmem, 0)) * 100 as mem_efficiency_pct
-FROM derecho_jobs
+FROM jobs
 WHERE memory IS NOT NULL AND reqmem > 0
 GROUP BY user
 HAVING COUNT(*) > 100;

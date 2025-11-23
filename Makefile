@@ -3,7 +3,7 @@
 
 PYTHON := python3
 SCRIPTS := scripts
-DB_PATH := data/qhist.db
+DATA_DIR := data
 
 # Default date is today in YYYYMMDD format
 DATE ?= $(shell date +%Y%m%d)
@@ -14,11 +14,15 @@ help:
 	@echo "QHist Database Management"
 	@echo ""
 	@echo "Usage:"
-	@echo "  make init-db          Create database tables"
+	@echo "  make init-db          Create database tables (both machines)"
 	@echo "  make sync-casper      Sync Casper jobs for DATE"
 	@echo "  make sync-derecho     Sync Derecho jobs for DATE"
 	@echo "  make sync-all         Sync both machines for DATE"
-	@echo "  make clean            Remove database file"
+	@echo "  make clean            Remove all database files"
+	@echo ""
+	@echo "Database files:"
+	@echo "  $(DATA_DIR)/casper.db   - Casper jobs"
+	@echo "  $(DATA_DIR)/derecho.db  - Derecho jobs"
 	@echo ""
 	@echo "Variables:"
 	@echo "  DATE=YYYYMMDD        Date to sync (default: today)"
@@ -30,9 +34,10 @@ help:
 	@echo "  make sync-all START=20251101 END=20251121"
 
 init-db:
-	@echo "Initializing database..."
+	@echo "Initializing databases..."
 	@$(PYTHON) -c "from qhist_db import init_db; init_db()"
-	@echo "Database created at $(DB_PATH)"
+	@echo "Created $(DATA_DIR)/casper.db"
+	@echo "Created $(DATA_DIR)/derecho.db"
 
 sync-casper:
 ifdef START
@@ -51,15 +56,15 @@ endif
 sync-all: sync-derecho sync-casper
 
 clean:
-	@echo "Removing database..."
-	@rm -f $(DB_PATH)
+	@echo "Removing databases..."
+	@rm -f $(DATA_DIR)/casper.db $(DATA_DIR)/derecho.db $(DATA_DIR)/qhist.db
 	@echo "Done."
 
 # Development targets
 .PHONY: test-import dry-run-casper dry-run-derecho
 
 test-import:
-	@$(PYTHON) -c "from qhist_db import CasperJob, DerechoJob, init_db; print('Import successful')"
+	@$(PYTHON) -c "from qhist_db import Job, init_db; print('Import successful')"
 
 dry-run-casper:
 	$(PYTHON) $(SCRIPTS)/sync_jobs.py -m casper -d $(DATE) --dry-run -v

@@ -8,7 +8,7 @@ from datetime import datetime
 # Add parent directory to path for imports
 sys.path.insert(0, str(__file__).rsplit("/", 2)[0])
 
-from qhist_db import init_db, get_session
+from qhist_db import init_db, get_session, get_db_path
 from qhist_db.sync import sync_jobs_bulk
 
 
@@ -25,7 +25,7 @@ def parse_args():
         help="Machine to sync from"
     )
 
-    # Date options (mutually exclusive groups)
+    # Date options
     date_group = parser.add_argument_group("date selection")
     date_group.add_argument(
         "-d", "--date",
@@ -44,11 +44,6 @@ def parse_args():
     )
 
     # Other options
-    parser.add_argument(
-        "--db-path",
-        metavar="PATH",
-        help="Path to SQLite database (default: data/qhist.db)"
-    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -100,12 +95,13 @@ def main():
         print("Error: Must specify --date or --start/--end", file=sys.stderr)
         sys.exit(1)
 
-    # Initialize database
+    # Initialize database for this machine
     if args.verbose:
-        print(f"Initializing database...")
+        db_path = get_db_path(args.machine)
+        print(f"Initializing database: {db_path}")
 
-    engine = init_db(args.db_path)
-    session = get_session(engine)
+    engine = init_db(args.machine)
+    session = get_session(args.machine, engine)
 
     try:
         # Determine sync parameters
