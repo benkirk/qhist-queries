@@ -88,6 +88,7 @@ Aggregated charging data for fast usage queries.
 | `job_count` | INTEGER | YES | NO | Number of jobs |
 | `charge_hours` | REAL | YES | NO | Derecho: core-hours or GPU-hours |
 | `cpu_hours` | REAL | YES | NO | Casper: CPU-hours |
+| `gpu_hours` | REAL | YES | NO | Casper: GPU-hours |
 | `memory_hours` | REAL | YES | NO | Casper: Memory GB-hours |
 
 **Unique constraint**: `(date, user, account, queue)`
@@ -102,8 +103,9 @@ Machine-specific view that adds computed charging columns to the jobs table.
 - GPU production: `elapsed * numnodes * 4 / 3600` (4 GPUs per node)
 - CPU production: `elapsed * numnodes * 128 / 3600` (128 cores per node)
 
-**Casper** (`cpu_hours` and `memory_hours` columns):
+**Casper** (`cpu_hours`, `gpu_hours`, and `memory_hours` columns):
 - `cpu_hours = elapsed * numcpus / 3600`
+- `gpu_hours = elapsed * numgpus / 3600`
 - `memory_hours = elapsed * memory_gb / 3600`
 
 ## Indexes

@@ -110,8 +110,9 @@ class DailySummary(Base):
     # Derecho uses charge_hours (core-hours or GPU-hours depending on queue)
     charge_hours = Column(Float, default=0)
 
-    # Casper tracks both CPU and memory hours
+    # Casper tracks CPU, GPU, and memory hours
     cpu_hours = Column(Float, default=0)
+    gpu_hours = Column(Float, default=0)
     memory_hours = Column(Float, default=0)
 
     __table_args__ = (

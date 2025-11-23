@@ -40,20 +40,22 @@ def derecho_charge(job: dict) -> float:
 def casper_charge(job: dict) -> dict:
     """Calculate charge metrics for a Casper job.
 
-    Casper tracks both CPU-hours and memory-hours.
+    Casper tracks CPU-hours, memory-hours, and GPU-hours (when GPUs used).
 
     Args:
-        job: Job record dict with elapsed, numcpus, memory
+        job: Job record dict with elapsed, numcpus, numgpus, memory
 
     Returns:
-        Dict with cpu_hours and memory_hours
+        Dict with cpu_hours, memory_hours, and gpu_hours
     """
     elapsed = job.get("elapsed") or 0
     numcpus = job.get("numcpus") or 0
+    numgpus = job.get("numgpus") or 0
     memory = job.get("memory") or 0  # in bytes
 
     return {
         "cpu_hours": elapsed * numcpus / 3600.0,
+        "gpu_hours": elapsed * numgpus / 3600.0,
         "memory_hours": elapsed * memory / (3600.0 * 1024 * 1024 * 1024),  # GB-hours
     }
 
@@ -78,6 +80,7 @@ CASPER_VIEW_SQL = """
 CREATE VIEW IF NOT EXISTS v_jobs_charged AS
 SELECT *,
   elapsed * COALESCE(numcpus, 0) / 3600.0 AS cpu_hours,
+  elapsed * COALESCE(numgpus, 0) / 3600.0 AS gpu_hours,
   elapsed * COALESCE(memory, 0) / (3600.0 * 1024 * 1024 * 1024) AS memory_hours
 FROM jobs;
 """

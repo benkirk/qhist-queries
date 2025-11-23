@@ -63,7 +63,7 @@ def generate_daily_summary(
     # The view columns differ by machine
     if machine == "casper":
         sql = text("""
-            INSERT INTO daily_summary (date, user, account, queue, job_count, cpu_hours, memory_hours)
+            INSERT INTO daily_summary (date, user, account, queue, job_count, cpu_hours, gpu_hours, memory_hours)
             SELECT
                 date(end) as date,
                 user,
@@ -71,6 +71,7 @@ def generate_daily_summary(
                 queue,
                 COUNT(*) as job_count,
                 SUM(cpu_hours) as cpu_hours,
+                SUM(gpu_hours) as gpu_hours,
                 SUM(memory_hours) as memory_hours
             FROM v_jobs_charged
             WHERE date(end) = :target_date
