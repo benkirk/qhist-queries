@@ -6,35 +6,51 @@ from typing import Callable
 ChargingFunc = Callable[[dict], float]
 
 
-def derecho_charge(job: dict) -> float:
-    """Calculate charge hours for a Derecho job.
+def derecho_charge(job: dict) -> dict:
+    """Calculate charge metrics for a Derecho job.
+
+    Derecho tracks CPU-hours, GPU-hours, and memory-hours.
+    CPU/GPU hours depend on queue type (dev vs production).
 
     Args:
-        job: Job record dict with elapsed, numnodes, numcpus, numgpus, queue
+        job: Job record dict with elapsed, numnodes, numcpus, numgpus, memory, queue
 
     Returns:
-        Charge in appropriate units (core-hours or GPU-hours)
+        Dict with cpu_hours, gpu_hours, and memory_hours
     """
     elapsed = job.get("elapsed") or 0
     numnodes = job.get("numnodes") or 0
     numcpus = job.get("numcpus") or 0
     numgpus = job.get("numgpus") or 0
+    memory = job.get("memory") or 0  # in bytes
     queue = (job.get("queue") or "").lower()
 
-    # GPU development queue - charge by actual GPUs
-    if "gpu" in queue and "dev" in queue:
-        return elapsed * numgpus / 3600.0
+    is_gpu_queue = "gpu" in queue
+    is_dev_queue = "dev" in queue
 
-    # CPU development queue - charge by actual CPUs
-    if "dev" in queue:
-        return elapsed * numcpus / 3600.0
+    # CPU hours: dev queues use actual CPUs, production uses 128 per node
+    if is_dev_queue:
+        cpu_hours = elapsed * numcpus / 3600.0
+    else:
+        cpu_hours = elapsed * numnodes * 128 / 3600.0
 
-    # GPU production queues - 4 GPUs per node
-    if "gpu" in queue:
-        return elapsed * numnodes * 4 / 3600.0
+    # GPU hours: only for GPU queues; dev uses actual GPUs, production uses 4 per node
+    if is_gpu_queue:
+        if is_dev_queue:
+            gpu_hours = elapsed * numgpus / 3600.0
+        else:
+            gpu_hours = elapsed * numnodes * 4 / 3600.0
+    else:
+        gpu_hours = 0.0
 
-    # CPU production queues (default) - 128 cores per node
-    return elapsed * numnodes * 128 / 3600.0
+    # Memory hours: GB-hours based on actual memory used
+    memory_hours = elapsed * memory / (3600.0 * 1024 * 1024 * 1024)
+
+    return {
+        "cpu_hours": cpu_hours,
+        "gpu_hours": gpu_hours,
+        "memory_hours": memory_hours,
+    }
 
 
 def casper_charge(job: dict) -> dict:
@@ -65,14 +81,18 @@ DERECHO_VIEW_SQL = """
 CREATE VIEW IF NOT EXISTS v_jobs_charged AS
 SELECT *,
   CASE
-    WHEN queue LIKE '%gpu%' AND queue LIKE '%dev%'
-      THEN elapsed * COALESCE(numgpus, 0) / 3600.0
     WHEN queue LIKE '%dev%'
       THEN elapsed * COALESCE(numcpus, 0) / 3600.0
+    ELSE elapsed * COALESCE(numnodes, 0) * 128 / 3600.0
+  END AS cpu_hours,
+  CASE
+    WHEN queue LIKE '%gpu%' AND queue LIKE '%dev%'
+      THEN elapsed * COALESCE(numgpus, 0) / 3600.0
     WHEN queue LIKE '%gpu%'
       THEN elapsed * COALESCE(numnodes, 0) * 4 / 3600.0
-    ELSE elapsed * COALESCE(numnodes, 0) * 128 / 3600.0
-  END AS charge_hours
+    ELSE 0.0
+  END AS gpu_hours,
+  elapsed * COALESCE(memory, 0) / (3600.0 * 1024 * 1024 * 1024) AS memory_hours
 FROM jobs;
 """
 

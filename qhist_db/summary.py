@@ -34,13 +34,14 @@ def generate_daily_summary(
 
     Args:
         session: SQLAlchemy session
-        machine: Machine name ('casper' or 'derecho')
+        machine: Machine name (kept for API compatibility)
         target_date: Date to summarize
         replace: If True, delete existing summary for this date first
 
     Returns:
         Dict with statistics about the summary generation
     """
+    _ = machine  # All machines now use same summary structure
     stats = {"rows_deleted": 0, "rows_inserted": 0}
 
     # Delete existing summaries for this date if replacing
@@ -59,44 +60,25 @@ def generate_daily_summary(
     if existing and not replace:
         return stats
 
-    # Use raw SQL to aggregate from the charging view
-    # The view columns differ by machine
-    if machine == "casper":
-        sql = text("""
-            INSERT INTO daily_summary (date, user, account, queue, job_count, cpu_hours, gpu_hours, memory_hours)
-            SELECT
-                date(end) as date,
-                user,
-                account,
-                queue,
-                COUNT(*) as job_count,
-                SUM(cpu_hours) as cpu_hours,
-                SUM(gpu_hours) as gpu_hours,
-                SUM(memory_hours) as memory_hours
-            FROM v_jobs_charged
-            WHERE date(end) = :target_date
-              AND user IS NOT NULL
-              AND account IS NOT NULL
-              AND queue IS NOT NULL
-            GROUP BY date(end), user, account, queue
-        """)
-    else:  # derecho
-        sql = text("""
-            INSERT INTO daily_summary (date, user, account, queue, job_count, charge_hours)
-            SELECT
-                date(end) as date,
-                user,
-                account,
-                queue,
-                COUNT(*) as job_count,
-                SUM(charge_hours) as charge_hours
-            FROM v_jobs_charged
-            WHERE date(end) = :target_date
-              AND user IS NOT NULL
-              AND account IS NOT NULL
-              AND queue IS NOT NULL
-            GROUP BY date(end), user, account, queue
-        """)
+    # Aggregate from the charging view (same structure for all machines)
+    sql = text("""
+        INSERT INTO daily_summary (date, user, account, queue, job_count, cpu_hours, gpu_hours, memory_hours)
+        SELECT
+            date(end) as date,
+            user,
+            account,
+            queue,
+            COUNT(*) as job_count,
+            SUM(cpu_hours) as cpu_hours,
+            SUM(gpu_hours) as gpu_hours,
+            SUM(memory_hours) as memory_hours
+        FROM v_jobs_charged
+        WHERE date(end) = :target_date
+          AND user IS NOT NULL
+          AND account IS NOT NULL
+          AND queue IS NOT NULL
+        GROUP BY date(end), user, account, queue
+    """)
 
     result = session.execute(sql, {"target_date": target_date.isoformat()})
     session.commit()
