@@ -4,9 +4,10 @@
 import argparse
 import sys
 from datetime import datetime
+from pathlib import Path
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(__file__).rsplit("/", 2)[0])
+# Add parent directory to path for imports (cross-platform)
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from qhist_db import init_db, get_session, get_db_path
 from qhist_db.sync import sync_jobs_bulk, date_range
