@@ -51,7 +51,7 @@ def sync_jobs(
     Returns:
         Dictionary with sync statistics
     """
-    from .logging import get_logger
+    from .log_config import get_logger
     logger = get_logger(__name__)
 
     stats = {"fetched": 0, "inserted": 0, "skipped": 0, "errors": 0}
