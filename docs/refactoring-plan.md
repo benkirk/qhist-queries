@@ -92,9 +92,7 @@ class JobQueries:
 ### 5.2 CI/CD
 
 Consider adding GitHub Actions for:
-- Running tests on push
 - Code coverage reporting
-- Linting with ruff or flake8
 
 ---
 
