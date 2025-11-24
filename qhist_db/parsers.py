@@ -60,6 +60,22 @@ def date_range(start_date: str, end_date: str) -> Iterator[str]:
         current += timedelta(days=1)
 
 
+def date_range_length(start_date: str, end_date: str) -> int:
+    """Determine the length of a date range (inclusive).
+
+    Args:
+        start_date: Start date in YYYYMMDD format
+        end_date: End date in YYYYMMDD format
+
+    Returns:
+        The number of days in the range
+    """
+    start = parse_date_string(start_date)
+    end = parse_date_string(end_date)
+
+    return (end-start).days
+
+
 def parse_timestamp(value: str | None) -> datetime | None:
     """Parse a timestamp string and convert to UTC.
 

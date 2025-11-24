@@ -5,8 +5,15 @@ from datetime import datetime
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
+# Optional dependency: rich
+try:
+    from rich.progress import track
+
+except ImportError:
+    track = None
+
 from .models import Job
-from .parsers import date_range, parse_date_string
+from .parsers import date_range, date_range_length, parse_date_string
 from .remote import fetch_jobs_ssh
 
 # Re-export for backwards compatibility
@@ -131,7 +138,10 @@ def sync_jobs_bulk(
 
     # If date range specified, loop one day at a time
     if start_date and end_date:
-        for day in date_range(start_date, end_date):
+        days = date_range(start_date, end_date)
+        ndays = date_range_length(start_date, end_date)
+        iterator = track(days, total=ndays, description="Processing...") if track and verbose else dates
+        for day in iterator:
             day_date = parse_date_string(day).date()
 
             # Smart skip: if already summarized, skip fetching
@@ -142,8 +152,6 @@ def sync_jobs_bulk(
                 stats["skipped_days"].append(day)
                 continue
 
-            if verbose:
-                print(f"  Fetching {day}...", end=" ", flush=True)
             day_stats = _sync_single_day(session, machine, day, dry_run, batch_size, verbose)
             stats["fetched"] += day_stats["fetched"]
             stats["inserted"] += day_stats["inserted"]
@@ -154,7 +162,7 @@ def sync_jobs_bulk(
                 stats["failed_days"].append(day)
             else:
                 if verbose:
-                    print(f"{day_stats['fetched']:,} jobs, {day_stats['inserted']:,} new")
+                    print(f"  Fetched {day} - {day_stats['fetched']:,} jobs, {day_stats['inserted']:,} new", flush=True)
 
                 # Generate summary for this day
                 if generate_summary and not dry_run and day_stats["fetched"] > 0:

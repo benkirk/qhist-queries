@@ -65,24 +65,7 @@ qhist_db/
 
 The following items are planned for future implementation as needed.
 
-### 5.1 Progress Bars
-
-For long sync operations, add optional progress display:
-
-```python
-# Optional dependency: rich or tqdm
-try:
-    from tqdm import tqdm
-except ImportError:
-    tqdm = None
-
-def sync_with_progress(dates, ...):
-    iterator = tqdm(dates) if tqdm and verbose else dates
-    for date in iterator:
-        ...
-```
-
-### 5.2 Query Interface
+### 5.1 Query Interface
 
 Add a Python API for common queries:
 
@@ -106,54 +89,7 @@ class JobQueries:
         ...
 ```
 
-### 5.3 Export Functionality
-
-Add CSV/JSON export commands:
-
-```bash
-# Proposed CLI
-qhist-export --machine derecho --format csv --output usage.csv \
-    --start 20250101 --end 20250131 --query "SELECT * FROM daily_summary"
-```
-
-### 5.4 Data Validation
-
-Add Pydantic models for incoming qhist records:
-
-```python
-from pydantic import BaseModel, validator
-
-class QhistRecord(BaseModel):
-    id: str
-    short_id: int | None
-    user: str | None
-    elapsed: int | None
-
-    @validator("elapsed")
-    def elapsed_non_negative(cls, v):
-        if v is not None and v < 0:
-            raise ValueError("elapsed time cannot be negative")
-        return v
-```
-
-### 5.5 Schema Migrations
-
-Add Alembic for database versioning:
-
-```
-alembic/
-├── env.py
-├── versions/
-│   └── 001_initial_schema.py
-└── alembic.ini
-```
-
-This enables:
-- Safe schema changes to existing databases
-- Version tracking
-- Rollback capability
-
-### 5.6 CI/CD
+### 5.2 CI/CD
 
 Consider adding GitHub Actions for:
 - Running tests on push

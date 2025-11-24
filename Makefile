@@ -2,7 +2,7 @@
 # Convenience targets for database management and job sync
 
 # full bash login shell requied for our complex make rules
-SHELL := /bin/bash --login
+#SHELL := /bin/bash --login
 
 # common way to inialize enviromnent across various types of systems
 config_env := module load conda >/dev/null 2>&1 || true
