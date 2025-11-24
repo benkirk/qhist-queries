@@ -30,7 +30,7 @@ This document tracks the remaining work for the qhist-queries codebase after com
 - All modules now under 300 lines
 
 ### Phase 4: Quality Improvements ✓
-- Added `logging.py` module with configurable logger
+- Added `log_config.py` module with configurable logger
 - Extracted machine constants:
   - `DERECHO_CORES_PER_NODE = 128`
   - `DERECHO_GPUS_PER_NODE = 4`
@@ -51,7 +51,7 @@ qhist_db/
 ├── __init__.py      (17 lines)  - Package exports
 ├── charging.py     (185 lines)  - Charging rules and SQL generation
 ├── database.py     (112 lines)  - Connection management
-├── logging.py       (58 lines)  - Logging configuration
+├── log_config.py    (58 lines)  - Logging configuration
 ├── models.py       (128 lines)  - SQLAlchemy ORM models
 ├── parsers.py      (258 lines)  - Field parsing utilities
 ├── queries.py      (500 lines)  - High-level query interface
