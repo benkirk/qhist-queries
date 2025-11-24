@@ -12,9 +12,9 @@ This project fetches job history from HPC systems via the `qhist` command over S
 - Bulk sync with duplicate detection
 - Handles job arrays (e.g., `6049117[28]`)
 - Day-by-day fetching for large date ranges
-- Charging views with computed resource hours (planned)
-- Daily summary tables for fast usage queries (planned)
-- Smart sync that skips already-processed days (planned)
+- Charging views with computed resource hours using machine-specific rules
+- Python query interface for common usage analysis patterns
+- Daily summary tables for fast usage queries
 
 ## Quick Start
 
@@ -130,6 +130,14 @@ session.close()
 
 See `qhist_db/queries.py` for complete API documentation and examples.
 
+**Try the examples:**
+```bash
+# Run the built-in examples with your database
+python -m qhist_db.queries
+```
+
+This will demonstrate all query methods with real data from your Derecho database.
+
 ## SQL Query Examples
 
 ```bash
@@ -151,7 +159,7 @@ LIMIT 10;
 
 -- Average wait time by queue
 SELECT queue,
-       AVG(strftime('%s', start) - strftime('%s', eligible))/60.0 as avg_wait_min
+       AVG(strftime('%s', start) - strftime('%s', submit))/60.0 as avg_wait_min
 FROM jobs
 WHERE start IS NOT NULL AND submit IS NOT NULL
 GROUP BY queue;
@@ -176,18 +184,22 @@ python scripts/sync_jobs.py -m casper --start 20250801 --end 20250831 -v
 python scripts/sync_jobs.py -m derecho -d 20251121 --dry-run -v
 ```
 
-## Charging (Planned)
+## Charging
 
-The project will include charging views and daily summary tables. See [docs/charging-views-plan.md](docs/charging-views-plan.md) for details.
+The project includes charging views (`v_jobs_charged`) that compute resource hours using machine-specific rules. The Python query interface automatically uses these views for accurate usage calculations.
 
-**Derecho charging:**
-- CPU queues: core-hours = `elapsed * numnodes * 128 / 3600`
-- GPU queues: GPU-hours = `elapsed * numnodes * 4 / 3600`
-- Development queues: actual resources used
-
-**Casper charging:**
-- CPU-hours = `elapsed * numcpus / 3600`
+**Derecho charging rules:**
+- **Production CPU queues**: core-hours = `elapsed * numnodes * 128 / 3600`
+- **Production GPU queues**: GPU-hours = `elapsed * numnodes * 4 / 3600`
+- **Development queues**: actual resources used (not full-node allocation)
 - Memory-hours = `elapsed * memory_gb / 3600`
+
+**Casper charging rules:**
+- CPU-hours = `elapsed * numcpus / 3600`
+- GPU-hours = `elapsed * numgpus / 3600`
+- Memory-hours = `elapsed * memory_gb / 3600`
+
+The charging views are created automatically by `init_db()` and are used by `JobQueries.usage_summary()` and `JobQueries.user_summary()` to provide accurate resource usage calculations.
 
 ## Requirements
 
