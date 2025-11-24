@@ -88,6 +88,7 @@ class JobQueries:
         """Get usage summary for an account over a date range."""
         ...
 ```
+along with examples at the bottom of the file to be run in a `if __name__ == "__main__":` construct
 
 ### 5.2 CI/CD
 
