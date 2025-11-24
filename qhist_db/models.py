@@ -155,13 +155,11 @@ _job_charged_attrs['cpu_hours'] = Column(Float)
 _job_charged_attrs['gpu_hours'] = Column(Float)
 _job_charged_attrs['memory_hours'] = Column(Float)
 
-
 # Add __repr__ method
 def _job_charged_repr(self):
     return f"<JobCharged(id='{self.id}', user='{self.user}', cpu_hours={self.cpu_hours:.2f})>"
 
-
 _job_charged_attrs['__repr__'] = _job_charged_repr
 
-# Create the JobCharged class dynamically
+# Create the JobCharged class dynamically from the dictionary
 JobCharged = type('JobCharged', (Base,), _job_charged_attrs)
