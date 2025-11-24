@@ -1,0 +1,16 @@
+name: qhist_db
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - conda-tree
+  - python
+  - pip
+  - rich
+  - sqlalchemy
+  - sqlite
+  - tqdm
+  - pip:
+      - pipdeptree
+      - pytest
+      - pytest-cov
