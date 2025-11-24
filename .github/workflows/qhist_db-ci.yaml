@@ -57,4 +57,4 @@ jobs:
 
       - name: Run Test Suite
         run: |
-          cd tests && pytest -v
+          cd tests && python -m pytest -v
