@@ -91,8 +91,7 @@ class JobQueries:
 
 ### 5.2 CI/CD
 
-Consider adding GitHub Actions for:
-- Code coverage reporting
+Consider extending current GitHub Action for code coverage reporting
 
 ---
 
