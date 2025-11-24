@@ -1,6 +1,7 @@
 name: qhist_db
 channels:
   - conda-forge
+  - defaults
 dependencies:
   - conda-tree
   - python
