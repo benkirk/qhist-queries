@@ -247,29 +247,43 @@ The `resource` command generates reports on resource usage.
 - `--end-date YYYY-MM-DD`: End date for analysis.
 - `-m [casper|derecho]`: The machine to query (default: `derecho`).
 - `--output-dir PATH`: Directory to save the reports (default: `.`).
+- `--format [dat|json|csv|md]`: Output format - dat (default), json, csv, or md (markdown).
 
 **Subcommands:**
-- `job-sizes`: Generates a report on job sizes by core count.
-- `job-waits`: Generates a report on job waits by core count.
-- `cpu-job-durations`: Generates a report on CPU job durations by day.
-- `cpu-job-sizes`: Generates a report on CPU job sizes by node count.
-- `cpu-job-waits`: Generates a report on CPU job waits by node count.
-- `usage-history`: Generates a report on daily usage history.
-- `gpu-job-sizes`: Generates a report on GPU job sizes by GPU count.
-- `gpu-job-waits`: Generates a report on GPU job waits by GPU count.
-- `gpu-job-durations`: Generates a report on GPU job durations by day.
-- `pie-group-cpu`: Generates a pie chart report of CPU usage grouped by account.
-- `pie-group-gpu`: Generates a pie chart report of GPU usage grouped by account.
-- `pie-proj-cpu`: Generates a pie chart report of CPU usage grouped by project.
-- `pie-proj-gpu`: Generates a pie chart report of GPU usage grouped by project.
-- `pie-user-cpu`: Generates a pie chart report of CPU usage grouped by user.
-- `pie-user-gpu`: Generates a pie chart report of GPU usage grouped by user.
+- `job-sizes`: Job sizes by core count
+- `job-waits`: Job waits by core count
+- `cpu-job-sizes`: CPU job sizes by node count
+- `cpu-job-waits`: CPU job waits by node count
+- `cpu-job-durations`: CPU job durations by day
+- `gpu-job-sizes`: GPU job sizes by GPU count
+- `gpu-job-waits`: GPU job waits by GPU count
+- `gpu-job-durations`: GPU job durations by day
+- `memory-job-sizes`: Job sizes by memory requirement
+- `memory-job-waits`: Job waits by memory requirement
+- `pie-user-cpu`: CPU usage by user
+- `pie-user-gpu`: GPU usage by user
+- `pie-proj-cpu`: CPU usage by project (account)
+- `pie-proj-gpu`: GPU usage by project (account)
+- `pie-group-cpu`: CPU usage by account
+- `pie-group-gpu`: GPU usage by account
+- `usage-history`: Daily usage history
 
 **Examples:**
 ```bash
+# Generate job sizes report (default .dat format)
 qhist resource --start-date 2025-11-01 --end-date 2025-11-30 job-sizes
+
+# Generate CPU job durations with custom output directory
 qhist resource --start-date 2025-11-01 --end-date 2025-11-30 --output-dir reports/ cpu-job-durations
-qhist resource --start-date 2025-11-01 --end-date 2025-11-30 pie-user-cpu
+
+# Export GPU job sizes as JSON
+qhist resource --start-date 2025-11-01 --end-date 2025-11-30 --format json gpu-job-sizes
+
+# Export user CPU usage as markdown table
+qhist resource --start-date 2025-11-01 --end-date 2025-11-30 --format md pie-user-cpu
+
+# Generate memory-based job size analysis as CSV
+qhist resource --start-date 2025-11-01 --end-date 2025-11-30 --format csv memory-job-sizes
 ```
 
 ## Requirements
