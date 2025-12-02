@@ -1,7 +1,64 @@
 """Command-line interface for qhist-queries."""
 
 import click
+import os
+from dataclasses import dataclass
 from datetime import date, datetime
+from typing import List, Dict, Any
+
+@dataclass
+class ColumnSpec:
+    """Specification for a single output column."""
+    key: str          # Dict key from query result
+    header: str       # Column header in output file
+    width: int        # Column width for formatting (0 = last column, no padding)
+    format: str       # Format spec: "s" (string), ".1f" (float with 1 decimal), ".4f", "" (no format)
+
+@dataclass
+class ReportConfig:
+    """Configuration for a single resource report."""
+    command_name: str                    # CLI command name
+    description: str                     # Help text
+    query_method: str                    # Method name on JobQueries object
+    query_params: Dict[str, Any]         # Parameters to pass to query method
+    filename_base: str                   # Base name for output file
+    columns: List[ColumnSpec]            # Column specifications
+
+    def get_filename(self, machine: str, start: date, end: date) -> str:
+        """Generate filename using standard pattern."""
+        prefix = machine[:2].capitalize()
+        return f"{prefix}_{self.filename_base}_{start}_{end}.dat"
+
+    def format_header(self) -> str:
+        """Format header row according to column specs."""
+        parts = []
+        for col in self.columns:
+            if col.width > 0:
+                parts.append(f"{col.header:<{col.width}}")
+            else:
+                # Last column - no width padding
+                parts.append(col.header)
+        return "".join(parts) + "\n"
+
+    def format_row(self, row: Dict[str, Any]) -> str:
+        """Format a single data row according to column specs."""
+        parts = []
+        for col in self.columns:
+            value = row[col.key]
+            if col.width > 0:
+                if col.format == "s":
+                    parts.append(f"{value:<{col.width}}")
+                elif col.format:
+                    parts.append(f"{value:<{col.width}{col.format}}")
+                else:
+                    parts.append(f"{value:<{col.width}}")
+            else:
+                # Last column - no width padding
+                if col.format:
+                    parts.append(f"{value:{col.format}}")
+                else:
+                    parts.append(str(value))
+        return "".join(parts) + "\n"
 
 def parse_date(ctx, param, value):
     """Callback to parse date strings into date objects."""
@@ -19,6 +76,7 @@ def cli():
 
 from .database import get_session
 from .queries import JobQueries
+from .exporters import get_exporter
 
 @click.group(invoke_without_command=True)
 @click.option("--start-date", type=str, callback=parse_date, help="Start date for analysis (YYYY-MM-DD).")
@@ -114,479 +172,342 @@ def unique_users(ctx):
 
 cli.add_command(history)
 
+# Resource report configurations
+RESOURCE_REPORTS = [
+    # Pie chart reports - Usage by group
+    ReportConfig(
+        command_name="pie-proj-cpu",
+        description="CPU usage by project (account)",
+        query_method="usage_by_group",
+        query_params={"resource_type": "cpu", "group_by": "account"},
+        filename_base="pie_proj_cpu",
+        columns=[
+            ColumnSpec("label", "Accounts", 15, "s"),
+            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
+            ColumnSpec("job_count", "Counts", 0, ""),
+        ]
+    ),
+    ReportConfig(
+        command_name="pie-user-gpu",
+        description="GPU usage by user",
+        query_method="usage_by_group",
+        query_params={"resource_type": "gpu", "group_by": "user"},
+        filename_base="pie_user_gpu",
+        columns=[
+            ColumnSpec("label", "User-ids", 15, "s"),
+            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
+            ColumnSpec("job_count", "Counts", 0, ""),
+        ]
+    ),
+    ReportConfig(
+        command_name="pie-user-cpu",
+        description="CPU usage by user",
+        query_method="usage_by_group",
+        query_params={"resource_type": "cpu", "group_by": "user"},
+        filename_base="pie_user_cpu",
+        columns=[
+            ColumnSpec("label", "User-ids", 15, "s"),
+            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
+            ColumnSpec("job_count", "Counts", 0, ""),
+        ]
+    ),
+    ReportConfig(
+        command_name="pie-proj-gpu",
+        description="GPU usage by project (account)",
+        query_method="usage_by_group",
+        query_params={"resource_type": "gpu", "group_by": "account"},
+        filename_base="pie_proj_gpu",
+        columns=[
+            ColumnSpec("label", "Accounts", 15, "s"),
+            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
+            ColumnSpec("job_count", "Counts", 0, ""),
+        ]
+    ),
+    ReportConfig(
+        command_name="pie-group-gpu",
+        description="GPU usage by account",
+        query_method="usage_by_group",
+        query_params={"resource_type": "gpu", "group_by": "account"},
+        filename_base="pie_group_gpu",
+        columns=[
+            ColumnSpec("label", "Accounts", 15, "s"),
+            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
+            ColumnSpec("job_count", "Counts", 0, ""),
+        ]
+    ),
+    ReportConfig(
+        command_name="pie-group-cpu",
+        description="CPU usage by account",
+        query_method="usage_by_group",
+        query_params={"resource_type": "cpu", "group_by": "account"},
+        filename_base="pie_group_cpu",
+        columns=[
+            ColumnSpec("label", "Accounts", 15, "s"),
+            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
+            ColumnSpec("job_count", "Counts", 0, ""),
+        ]
+    ),
+
+    # Duration reports
+    ReportConfig(
+        command_name="gpu-job-durations",
+        description="GPU job durations by day",
+        query_method="job_durations_by_day",
+        query_params={"resource_type": "gpu"},
+        filename_base="gpu_job_durations",
+        columns=[
+            ColumnSpec("date", "Date", 20, "s"),
+            ColumnSpec("<30s", "<30s", 12, ".1f"),
+            ColumnSpec("30s-30m", "30s-30m", 12, ".1f"),
+            ColumnSpec("30-60m", "30-60m", 12, ".1f"),
+            ColumnSpec("1-5h", "1-5h", 12, ".1f"),
+            ColumnSpec("5-12h", "5-12h", 12, ".1f"),
+            ColumnSpec("12-18h", "12-18h", 12, ".1f"),
+            ColumnSpec(">18h", ">18h", 0, ".1f"),
+        ]
+    ),
+    ReportConfig(
+        command_name="cpu-job-durations",
+        description="CPU job durations by day",
+        query_method="job_durations_by_day",
+        query_params={"resource_type": "cpu"},
+        filename_base="cpu_job_durations",
+        columns=[
+            ColumnSpec("date", "Date", 20, "s"),
+            ColumnSpec("<30s", "<30s", 12, ".1f"),
+            ColumnSpec("30s-30m", "30s-30m", 12, ".1f"),
+            ColumnSpec("30-60m", "30-60m", 12, ".1f"),
+            ColumnSpec("1-5h", "1-5h", 12, ".1f"),
+            ColumnSpec("5-12h", "5-12h", 12, ".1f"),
+            ColumnSpec("12-18h", "12-18h", 12, ".1f"),
+            ColumnSpec(">18h", ">18h", 0, ".1f"),
+        ]
+    ),
+
+    # Wait time reports
+    ReportConfig(
+        command_name="gpu-job-waits",
+        description="GPU job waits by GPU count",
+        query_method="job_waits_by_resource",
+        query_params={"resource_type": "gpu", "range_type": "gpu"},
+        filename_base="gpu_job_waits",
+        columns=[
+            ColumnSpec("range_label", "GPUs", 20, "s"),
+            ColumnSpec("avg_wait_hours", "AveWait-hrs", 12, ".4f"),
+            ColumnSpec("job_count", "#-Jobs", 0, ""),
+        ]
+    ),
+    ReportConfig(
+        command_name="cpu-job-waits",
+        description="CPU job waits by node count",
+        query_method="job_waits_by_resource",
+        query_params={"resource_type": "cpu", "range_type": "node"},
+        filename_base="cpu_job_waits",
+        columns=[
+            ColumnSpec("range_label", "Nodes", 20, "s"),
+            ColumnSpec("avg_wait_hours", "AveWait-hrs", 12, ".4f"),
+            ColumnSpec("job_count", "#-Jobs", 0, ""),
+        ]
+    ),
+    ReportConfig(
+        command_name="job-waits",
+        description="Job waits by core count",
+        query_method="job_waits_by_resource",
+        query_params={"resource_type": "all", "range_type": "core"},
+        filename_base="bycore_job_waits",
+        columns=[
+            ColumnSpec("range_label", "Cores", 20, "s"),
+            ColumnSpec("avg_wait_hours", "AveWait-hrs", 12, ".4f"),
+            ColumnSpec("job_count", "#-Jobs", 0, ""),
+        ]
+    ),
+
+    # Job size reports
+    ReportConfig(
+        command_name="gpu-job-sizes",
+        description="GPU job sizes by GPU count",
+        query_method="job_sizes_by_resource",
+        query_params={"resource_type": "gpu", "range_type": "gpu"},
+        filename_base="gpu_job_sizes",
+        columns=[
+            ColumnSpec("range_label", "GPUs", 20, "s"),
+            ColumnSpec("job_count", "#-Jobs", 12, ""),
+            ColumnSpec("user_count", "#-Users", 12, ""),
+            ColumnSpec("hours", "Cr-hrs", 0, ".1f"),
+        ]
+    ),
+    ReportConfig(
+        command_name="cpu-job-sizes",
+        description="CPU job sizes by node count",
+        query_method="job_sizes_by_resource",
+        query_params={"resource_type": "cpu", "range_type": "node"},
+        filename_base="cpu_job_sizes",
+        columns=[
+            ColumnSpec("range_label", "Nodes", 20, "s"),
+            ColumnSpec("job_count", "#-Jobs", 12, ""),
+            ColumnSpec("user_count", "#-Users", 12, ""),
+            ColumnSpec("hours", "Cr-hrs", 0, ".1f"),
+        ]
+    ),
+    ReportConfig(
+        command_name="job-sizes",
+        description="Job sizes by core count",
+        query_method="job_sizes_by_resource",
+        query_params={"resource_type": "all", "range_type": "core"},
+        filename_base="bycore_job_sizes",
+        columns=[
+            ColumnSpec("range_label", "Cores", 20, "s"),
+            ColumnSpec("job_count", "#-Jobs", 12, ""),
+            ColumnSpec("user_count", "#-Users", 12, ""),
+            ColumnSpec("hours", "Cr-hrs", 0, ".1f"),
+        ]
+    ),
+
+    # Usage history report (keeping old method for now)
+    ReportConfig(
+        command_name="usage-history",
+        description="Daily usage history",
+        query_method="usage_history_by_day",
+        query_params={},
+        filename_base="usage_history",
+        columns=[
+            ColumnSpec("Date", "Date", 18, "s"),
+            ColumnSpec("#-Users", "#-Users", 12, ""),
+            ColumnSpec("#-Proj", "#-Proj", 8, ""),
+            ColumnSpec("#-CPU-Users", "#-CPU-Users", 13, ""),
+            ColumnSpec("#-CPU-Proj", "#-CPU-Proj", 13, ""),
+            ColumnSpec("#-CPU-Jobs", "#-CPU-Jobs", 13, ""),
+            ColumnSpec("#-CPU-Hrs", "#-CPU-Hrs", 12, ".1f"),
+            ColumnSpec("#-GPU-Users", "#-GPU-Users", 13, ""),
+            ColumnSpec("#-GPU-Proj", "#-GPU-Proj", 13, ""),
+            ColumnSpec("#-GPU-Jobs", "#-GPU-Jobs", 13, ""),
+            ColumnSpec("#-GPU-Hrs", "#-GPU-Hrs", 0, ".1f"),
+        ]
+    ),
+
+    # Memory-based reports (NEW)
+    ReportConfig(
+        command_name="memory-job-waits",
+        description="Job waits by memory requirement",
+        query_method="memory_job_waits",
+        query_params={},
+        filename_base="memory_job_waits",
+        columns=[
+            ColumnSpec("range_label", "Memory(GB)", 20, "s"),
+            ColumnSpec("avg_wait_hours", "AveWait-hrs", 12, ".4f"),
+            ColumnSpec("job_count", "#-Jobs", 0, ""),
+        ]
+    ),
+    ReportConfig(
+        command_name="memory-job-sizes",
+        description="Job sizes by memory requirement",
+        query_method="memory_job_sizes",
+        query_params={},
+        filename_base="memory_job_sizes",
+        columns=[
+            ColumnSpec("range_label", "Memory(GB)", 20, "s"),
+            ColumnSpec("job_count", "#-Jobs", 12, ""),
+            ColumnSpec("user_count", "#-Users", 12, ""),
+            ColumnSpec("hours", "Cr-hrs", 0, ".1f"),
+        ]
+    ),
+]
+
+def _write_report(data: List[Dict[str, Any]], config: ReportConfig,
+                  machine: str, start: date, end: date, output_dir: str,
+                  output_format: str = "dat") -> str:
+    """Write report data to file using the specified configuration and format.
+
+    Args:
+        data: Query results as list of dicts
+        config: Report configuration
+        machine: Machine name for filename
+        start: Start date for filename
+        end: End date for filename
+        output_dir: Output directory path
+        output_format: Output format ('dat', 'json', 'csv', 'md')
+
+    Returns:
+        Full path to written file
+    """
+    # Get base filename and replace extension based on format
+    base_filename = config.get_filename(machine, start, end)
+    if output_format != "dat":
+        # Replace .dat extension with appropriate format extension
+        base_filename = base_filename.replace(".dat", f".{output_format}")
+
+    filepath = os.path.join(output_dir, base_filename)
+
+    # Get appropriate exporter and write file
+    exporter = get_exporter(output_format)
+    exporter.export(data, config.columns, filepath)
+
+    return filepath
+
+def create_resource_command(config: ReportConfig):
+    """Factory function to create a resource command from configuration.
+
+    Generates a Click command that:
+    1. Extracts context (dates, machine, output_dir)
+    2. Executes the appropriate query method
+    3. Writes formatted output to file
+    4. Cleans up session
+
+    Args:
+        config: ReportConfig specifying command behavior
+
+    Returns:
+        Click command function
+    """
+    @click.pass_context
+    def command_func(ctx):
+        # Extract context
+        start_date = ctx.obj['start_date']
+        end_date = ctx.obj['end_date']
+        machine = ctx.obj['machine']
+        output_dir = ctx.obj['output_dir']
+        output_format = ctx.obj.get('output_format', 'dat')
+
+        # Execute query
+        session = get_session(machine)
+        queries = JobQueries(session)
+        query_func = getattr(queries, config.query_method)
+        data = query_func(**config.query_params, start=start_date, end=end_date)
+
+        # Write output
+        filepath = _write_report(data, config, machine, start_date, end_date, output_dir, output_format)
+        click.echo(f"Report saved to {filepath}")
+
+        session.close()
+
+    # Set command metadata for Click
+    command_func.__name__ = config.command_name.replace("-", "_")
+    command_func.__doc__ = config.description
+
+    return command_func
+
 @click.group(invoke_without_command=True)
 @click.option("--start-date", type=str, callback=parse_date, help="Start date for analysis (YYYY-MM-DD).")
 @click.option("--end-date", type=str, callback=parse_date, help="End date for analysis (YYYY-MM-DD).")
 @click.option("-m", "--machine", type=click.Choice(["casper", "derecho"]), default="derecho", help="The machine to query.")
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True, writable=True, resolve_path=True), default=".", help="Directory to save the reports.")
+@click.option("--format", "output_format", type=click.Choice(["dat", "json", "csv", "md"]), default="dat", help="Output format (dat, json, csv, md).")
 @click.pass_context
-def resource(ctx, start_date, end_date, machine, output_dir):
+def resource(ctx, start_date, end_date, machine, output_dir, output_format):
     """Resource-centric view of job data."""
     ctx.ensure_object(dict)
     ctx.obj['start_date'] = start_date
     ctx.obj['end_date'] = end_date
     ctx.obj['machine'] = machine
     ctx.obj['output_dir'] = output_dir
+    ctx.obj['output_format'] = output_format
     if ctx.invoked_subcommand is None:
         click.echo(f"Resource view for {machine} from {start_date} to {end_date}, output to {output_dir}")
 
-import os
-
-# ... (other imports)
-
-@resource.command("pie-proj-cpu")
-@click.pass_context
-def pie_proj_cpu(ctx):
-    """Generates a pie chart report of CPU usage grouped by project."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.pie_group_cpu(start=start_date, end=end_date) # Reusing existing query
-
-    filename = f"{machine[:2].capitalize()}_pie_proj_cpu_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'Accounts':<15}{'Usage':<15}{'Counts'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['Accounts']:<15}{row['Usage']:<15.1f}{row['Counts']}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("pie-user-gpu")
-@click.pass_context
-def pie_user_gpu(ctx):
-    """Generates a pie chart report of GPU usage grouped by user."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.pie_user_gpu(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_pie_user_gpu_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'User-ids':<15}{'Usage':<15}{'Counts'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['User-ids']:<15}{row['Usage']:<15.1f}{row['Counts']}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("pie-user-cpu")
-@click.pass_context
-def pie_user_cpu(ctx):
-    """Generates a pie chart report of CPU usage grouped by user."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.pie_user_cpu(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_pie_user_cpu_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'User-ids':<15}{'Usage':<15}{'Counts'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['User-ids']:<15}{row['Usage']:<15.1f}{row['Counts']}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("pie-proj-gpu")
-@click.pass_context
-def pie_proj_gpu(ctx):
-    """Generates a pie chart report of GPU usage grouped by project."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.pie_group_gpu(start=start_date, end=end_date) # Reusing existing query
-
-    filename = f"{machine[:2].capitalize()}_pie_proj_gpu_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'Accounts':<15}{'Usage':<15}{'Counts'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['Accounts']:<15}{row['Usage']:<15.1f}{row['Counts']}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("pie-group-gpu")
-@click.pass_context
-def pie_group_gpu(ctx):
-    """Generates a pie chart report of GPU usage grouped by account."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.pie_group_gpu(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_pie_group_gpu_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'Accounts':<15}{'Usage':<15}{'Counts'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['Accounts']:<15}{row['Usage']:<15.1f}{row['Counts']}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("pie-group-cpu")
-@click.pass_context
-def pie_group_cpu(ctx):
-    """Generates a pie chart report of CPU usage grouped by account."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.pie_group_cpu(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_pie_group_cpu_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'Accounts':<15}{'Usage':<15}{'Counts'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['Accounts']:<15}{row['Usage']:<15.1f}{row['Counts']}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("gpu-job-durations")
-@click.pass_context
-def gpu_job_durations(ctx):
-    """Generates a report on GPU job durations by day."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.gpu_job_durations_by_day(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_gpu_job_durations_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'Date':<20}{'<30s':<12}{'30s-30m':<12}{'30-60m':<12}{'1-5h':<12}{'5-12h':<12}{'12-18h':<12}{'>18h'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['date']:<20}"
-                f"{row['<30s']:<12.1f}"
-                f"{row['30s-30m']:<12.1f}"
-                f"{row['30-60m']:<12.1f}"
-                f"{row['1-5h']:<12.1f}"
-                f"{row['5-12h']:<12.1f}"
-                f"{row['12-18h']:<12.1f}"
-                f"{row['>18h']:.1f}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("gpu-job-waits")
-@click.pass_context
-def gpu_job_waits(ctx):
-    """Generates a report on GPU job waits by GPU count."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.gpu_job_waits_by_gpu_ranges(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_gpu_job_waits_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'GPUs':<20}{'AveWait-hrs':<12}{'#-Jobs'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['gpu_range']:<20}{row['avg_wait_hours']:<12.4f}{row['job_count']}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("gpu-job-sizes")
-@click.pass_context
-def gpu_job_sizes(ctx):
-    """Generates a report on GPU job sizes by GPU count."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.gpu_job_sizes_by_gpu_ranges(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_gpu_job_sizes_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'GPUs':<20}{'#-Jobs':<12}{'#-Users':<12}{'Cr-hrs'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['gpu_range']:<20}{row['job_count']:<12}{row['user_count']:<12}{row['gpu_hours']:.1f}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("usage-history")
-@click.pass_context
-def usage_history(ctx):
-    """Generates a report on daily usage history."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.usage_history_by_day(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_usage_history_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = (
-            f"{'Date':<18}{'#-Users':<12}{'#-Proj':<8}{'#-CPU-Users':<13}{'#-CPU-Proj':<13}"
-            f"{'#-CPU-Jobs':<13}{'#-CPU-Hrs':<12}{'#-GPU-Users':<13}{'#-GPU-Proj':<13}"
-            f"{'#-GPU-Jobs':<13}{'#-GPU-Hrs'}\n"
-        )
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['Date']:<18}{row['#-Users']:<12}{row['#-Proj']:<8}{row['#-CPU-Users']:<13}"
-                f"{row['#-CPU-Proj']:<13}{row['#-CPU-Jobs']:<13}{row['#-CPU-Hrs']:<12.1f}"
-                f"{row['#-GPU-Users']:<13}{row['#-GPU-Proj']:<13}{row['#-GPU-Jobs']:<13}"
-                f"{row['#-GPU-Hrs']:.1f}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("cpu-job-waits")
-@click.pass_context
-def cpu_job_waits(ctx):
-    """Generates a report on CPU job waits by node count."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.cpu_job_waits_by_node_ranges(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_cpu_job_waits_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'Nodes':<20}{'AveWait-hrs':<12}{'#-Jobs'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['node_range']:<20}{row['avg_wait_hours']:<12.4f}{row['job_count']}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("cpu-job-sizes")
-@click.pass_context
-def cpu_job_sizes(ctx):
-    """Generates a report on CPU job sizes by node count."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.cpu_job_sizes_by_node_ranges(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_cpu_job_sizes_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'Nodes':<20}{'#-Jobs':<12}{'#-Users':<12}{'Cr-hrs'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['node_range']:<20}{row['job_count']:<12}{row['user_count']:<12}{row['core_hours']:.1f}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("cpu-job-durations")
-@click.pass_context
-def cpu_job_durations(ctx):
-    """Generates a report on CPU job durations by day."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.cpu_job_durations_by_day(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_cpu_job_durations_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        header = f"{'Date':<20}{'<30s':<12}{'30s-30m':<12}{'30-60m':<12}{'1-5h':<12}{'5-12h':<12}{'12-18h':<12}{'>18h'}\n"
-        f.write(header)
-        for row in data:
-            f.write(
-                f"{row['date']:<20}"
-                f"{row['<30s']:<12.1f}"
-                f"{row['30s-30m']:<12.1f}"
-                f"{row['30-60m']:<12.1f}"
-                f"{row['1-5h']:<12.1f}"
-                f"{row['5-12h']:<12.1f}"
-                f"{row['12-18h']:<12.1f}"
-                f"{row['>18h']:.1f}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("job-waits")
-@click.pass_context
-def job_waits(ctx):
-    """Generates a report on job waits by core count."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.job_waits_by_core_ranges(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_bycore_job_waits_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        f.write(f"{'Cores':<20}{'AveWait-hrs':<12}{'#-Jobs'}\n")
-        for row in data:
-            f.write(
-                f"{row['core_range']:<20}{row['avg_wait_hours']:<12.4f}{row['job_count']}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
-
-@resource.command("job-sizes")
-@click.pass_context
-def job_sizes(ctx):
-    """Generates a report on job sizes by core count."""
-    start_date = ctx.obj['start_date']
-    end_date = ctx.obj['end_date']
-    machine = ctx.obj['machine']
-    output_dir = ctx.obj['output_dir']
-
-    session = get_session(machine)
-    queries = JobQueries(session)
-
-    data = queries.job_sizes_by_core_ranges(start=start_date, end=end_date)
-
-    filename = f"{machine[:2].capitalize()}_bycore_job_sizes_{start_date}_{end_date}.dat"
-    filepath = os.path.join(output_dir, filename)
-
-    with open(filepath, "w") as f:
-        f.write(f"{'Cores':<20}{'#-Jobs':<12}{'#-Users':<12}{'Cr-hrs'}\n")
-        for row in data:
-            f.write(
-                f"{row['core_range']:<20}{row['job_count']:<12}{row['user_count']:<12}{row['core_hours']:.1f}\n"
-            )
-
-    click.echo(f"Report saved to {filepath}")
-
-    session.close()
+# Dynamically register all resource commands from configuration
+for report_config in RESOURCE_REPORTS:
+    command = create_resource_command(report_config)
+    resource.command(report_config.command_name)(command)
 
 cli.add_command(resource)
 
