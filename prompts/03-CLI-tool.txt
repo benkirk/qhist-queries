@@ -10,7 +10,7 @@ I would like to create a CLI tool with the following features:
 
 This is the time history view.
 
-I would also like a resource-centric view for the same timeframe - for example see the Derecho ASCII data files in @samples
+I would also like a resource-centric view for the same timeframe - for example see the Derecho ASCII data files in @samples/
 
 Creating these from the CLI tool for the specified data range would be another mode of operation.
 

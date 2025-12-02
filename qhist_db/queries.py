@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 from .models import Job, DailySummary, JobCharged
 
 
+from sqlalchemy import case
+
 class JobQueries:
     """High-level query interface for job history data.
 
@@ -36,6 +38,324 @@ class JobQueries:
             session: SQLAlchemy session for database access
         """
         self.session = session
+
+    def cpu_job_waits_by_node_ranges(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get CPU job wait statistics grouped by node count ranges.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            A list of dicts with 'node_range', 'avg_wait_hours', and 'job_count' keys.
+        """
+        node_ranges = [
+            (1, 1), (2, 2), (3, 4), (5, 8), (9, 16), (17, 32),
+            (33, 64), (65, 128), (129, 256), (257, 512), (513, 1024), (1025, 2048)
+        ]
+        cpu_queues = ['cpu', 'cpudev']
+
+        node_range_case = case(
+            *[
+                (and_(Job.numnodes >= low, Job.numnodes <= high), f"{low}-{high}" if low != high else str(low))
+                for low, high in node_ranges
+            ],
+            else_=">2048"
+        ).label("node_range_label")
+
+        wait_time_seconds = func.julianday(Job.start) - func.julianday(Job.eligible)
+        wait_time_hours = wait_time_seconds * 24
+
+        subquery = self.session.query(
+            Job.id,
+            node_range_case,
+            wait_time_hours.label("wait_hours")
+        ).filter(Job.queue.in_(cpu_queues))
+
+        if start:
+            subquery = subquery.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            subquery = subquery.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+        
+        subquery = subquery.subquery()
+
+        query = self.session.query(
+            subquery.c.node_range_label,
+            func.avg(subquery.c.wait_hours).label("avg_wait_hours"),
+            func.count(subquery.c.id).label("job_count")
+        ).group_by(subquery.c.node_range_label)
+
+        order_cases = {f"{low}-{high}" if low != high else str(low): i for i, (low, high) in enumerate(node_ranges)}
+        order_cases['>2048'] = len(node_ranges)
+        order_expression = case(
+            order_cases,
+            value=subquery.c.node_range_label
+        )
+
+        results = query.order_by(order_expression).all()
+
+        return [
+            {
+                "node_range": row[0],
+                "avg_wait_hours": row[1] or 0.0,
+                "job_count": row[2],
+            }
+            for row in results
+        ]
+
+    def cpu_job_sizes_by_node_ranges(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get CPU job size statistics grouped by node count ranges.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            A list of dicts with 'node_range', 'job_count', 'user_count', and 'core_hours' keys.
+        """
+        node_ranges = [
+            (1, 1), (2, 2), (3, 4), (5, 8), (9, 16), (17, 32),
+            (33, 64), (65, 128), (129, 256), (257, 512), (513, 1024), (1025, 2048)
+        ]
+        cpu_queues = ['cpu', 'cpudev']
+
+        node_range_case = case(
+            *[
+                (and_(Job.numnodes >= low, Job.numnodes <= high), f"{low}-{high}" if low != high else str(low))
+                for low, high in node_ranges
+            ],
+            else_=">2048"
+        ).label("node_range_label")
+
+        subquery = self.session.query(
+            Job.id,
+            Job.user,
+            JobCharged.cpu_hours,
+            node_range_case
+        ).join(JobCharged, Job.id == JobCharged.id).filter(Job.queue.in_(cpu_queues))
+
+        if start:
+            subquery = subquery.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            subquery = subquery.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+        
+        subquery = subquery.subquery()
+
+        query = self.session.query(
+            subquery.c.node_range_label,
+            func.count(subquery.c.id).label("job_count"),
+            func.count(func.distinct(subquery.c.user)).label("user_count"),
+            func.sum(subquery.c.cpu_hours).label("core_hours")
+        ).group_by(subquery.c.node_range_label)
+        
+        order_cases = {f"{low}-{high}" if low != high else str(low): i for i, (low, high) in enumerate(node_ranges)}
+        order_cases['>2048'] = len(node_ranges)
+        order_expression = case(
+            order_cases,
+            value=subquery.c.node_range_label
+        )
+
+        results = query.order_by(order_expression).all()
+
+        return [
+            {
+                "node_range": row[0],
+                "job_count": row[1],
+                "user_count": row[2],
+                "core_hours": row[3] or 0.0,
+            }
+            for row in results
+        ]
+
+    def cpu_job_durations_by_day(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get CPU job duration statistics by day.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            A list of dicts with 'date' and duration bucket keys.
+        """
+        duration_buckets = {
+            "<30s": Job.elapsed < 30,
+            "30s-30m": and_(Job.elapsed >= 30, Job.elapsed < 1800),
+            "30-60m": and_(Job.elapsed >= 1800, Job.elapsed < 3600),
+            "1-5h": and_(Job.elapsed >= 3600, Job.elapsed < 18000),
+            "5-12h": and_(Job.elapsed >= 18000, Job.elapsed < 43200),
+            "12-18h": and_(Job.elapsed >= 43200, Job.elapsed < 64800),
+            ">18h": Job.elapsed >= 64800,
+        }
+
+        query = self.session.query(
+            func.date(Job.end).label("job_date"),
+            *[func.sum(case((bucket, JobCharged.cpu_hours), else_=0)).label(label) for label, bucket in duration_buckets.items()]
+        ).join(JobCharged, Job.id == JobCharged.id)
+
+        if start:
+            query = query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            query = query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+
+        results = query.group_by("job_date").order_by("job_date").all()
+
+        return [
+            {
+                "date": row[0],
+                **{label: row[i+1] or 0.0 for i, label in enumerate(duration_buckets.keys())}
+            }
+            for row in results
+        ]
+        
+    def job_waits_by_core_ranges(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get job wait statistics grouped by core count ranges.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            A list of dicts with 'core_range', 'avg_wait_hours', and 'job_count' keys.
+        """
+        core_ranges = [
+            (1, 1), (2, 2), (3, 4), (5, 8), (9, 16), (17, 32),
+            (33, 48), (49, 64), (65, 96), (97, 128)
+        ]
+
+        core_range_case = case(
+            *[
+                (and_(Job.numcpus >= low, Job.numcpus <= high), f"{low}-{high}" if low != high else str(low))
+                for low, high in core_ranges
+            ],
+            else_=">128"
+        ).label("core_range_label")
+        
+        wait_time_seconds = func.julianday(Job.start) - func.julianday(Job.eligible)
+        wait_time_hours = wait_time_seconds * 24
+
+        subquery = self.session.query(
+            Job.id,
+            core_range_case,
+            wait_time_hours.label("wait_hours")
+        )
+
+        if start:
+            subquery = subquery.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            subquery = subquery.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+        
+        subquery = subquery.subquery()
+
+        query = self.session.query(
+            subquery.c.core_range_label,
+            func.avg(subquery.c.wait_hours).label("avg_wait_hours"),
+            func.count(subquery.c.id).label("job_count")
+        ).group_by(subquery.c.core_range_label)
+
+        order_cases = {f"{low}-{high}" if low != high else str(low): i for i, (low, high) in enumerate(core_ranges)}
+        order_cases['>128'] = len(core_ranges)
+        order_expression = case(
+            order_cases,
+            value=subquery.c.core_range_label
+        )
+
+        results = query.order_by(order_expression).all()
+
+        return [
+            {
+                "core_range": row[0],
+                "avg_wait_hours": row[1] or 0.0,
+                "job_count": row[2],
+            }
+            for row in results
+        ]
+
+    def job_sizes_by_core_ranges(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get job size statistics grouped by core count ranges.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            A list of dicts with 'core_range', 'job_count', 'user_count', and 'core_hours' keys.
+        """
+        core_ranges = [
+            (1, 1), (2, 2), (3, 4), (5, 8), (9, 16), (17, 32),
+            (33, 48), (49, 64), (65, 96), (97, 128)
+        ]
+
+        # Create the CASE statement for core ranges
+        core_range_case = case(
+            *[
+                (and_(Job.numcpus >= low, Job.numcpus <= high), f"{low}-{high}" if low != high else str(low))
+                for low, high in core_ranges
+            ],
+            else_=">128"
+        ).label("core_range_label")
+
+        # Subquery to get the core range for each job
+        subquery = self.session.query(
+            Job.id,
+            Job.user,
+            JobCharged.cpu_hours,
+            core_range_case
+        ).join(JobCharged, Job.id == JobCharged.id)
+
+        if start:
+            subquery = subquery.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            subquery = subquery.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+        
+        subquery = subquery.subquery()
+
+        # Main query to aggregate the results
+        query = self.session.query(
+            subquery.c.core_range_label,
+            func.count(subquery.c.id).label("job_count"),
+            func.count(func.distinct(subquery.c.user)).label("user_count"),
+            func.sum(subquery.c.cpu_hours).label("core_hours")
+        ).group_by(subquery.c.core_range_label)
+
+        # Order the results based on the core_ranges list
+        order_cases = {f"{low}-{high}" if low != high else str(low): i for i, (low, high) in enumerate(core_ranges)}
+        order_cases['>128'] = len(core_ranges)
+        order_expression = case(
+            order_cases,
+            value=subquery.c.core_range_label
+        )
+
+        results = query.order_by(order_expression).all()
+
+        return [
+            {
+                "core_range": row[0],
+                "job_count": row[1],
+                "user_count": row[2],
+                "core_hours": row[3] or 0.0,
+            }
+            for row in results
+        ]
 
     def jobs_by_user(
         self,
@@ -302,6 +622,193 @@ class JobQueries:
         )
 
         return query.order_by(DailySummary.date).all()
+
+    def jobs_per_user_account_by_period(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get the number of jobs per user per account by period in a date range.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day', 'month', 'quarter')
+
+        Returns:
+            A list of dicts with 'period', 'user', 'account', and 'job_count' keys.
+        """
+        if period == "day":
+            period_func = func.strftime("%Y-%m-%d", Job.end)
+        elif period == "month":
+            period_func = func.strftime("%Y-%m", Job.end)
+        elif period == "quarter":
+            # This is tricky with pure SQL in SQLite. We will get monthly data and aggregate.
+            # However, for job counts, we can just sum them up.
+            period_func = func.strftime("%Y-%m", Job.end)
+        else:
+            raise ValueError("Invalid period specified. Must be 'day', 'month', or 'quarter'.")
+
+        query = self.session.query(
+            period_func.label("period"),
+            Job.user,
+            Job.account,
+            func.count(Job.id).label("job_count")
+        )
+
+        if start:
+            query = query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            query = query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+
+        results = query.group_by("period", Job.user, Job.account).order_by("period", Job.user, Job.account).all()
+
+        if period == "quarter":
+            quarterly_counts = {} # key: (YYYY-Q, user, account)
+            for row in results:
+                year, month = row.period.split('-')
+                quarter = (int(month) - 1) // 3 + 1
+                q_key = f"{year}-Q{quarter}"
+                
+                agg_key = (q_key, row.user, row.account)
+                quarterly_counts[agg_key] = quarterly_counts.get(agg_key, 0) + row.job_count
+
+            return [{"period": key[0], "user": key[1], "account": key[2], "job_count": value} for key, value in quarterly_counts.items()]
+
+
+        return [{"period": row[0], "user": row[1], "account": row[2], "job_count": row[3]} for row in results]
+
+    def unique_projects_by_period(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get the number of unique projects by period in a date range.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day', 'month', 'quarter')
+
+        Returns:
+            A list of dicts with 'period' and 'project_count' keys.
+        """
+        if period == "quarter":
+            # For quarters, get monthly data and aggregate
+            monthly_query = self.session.query(
+                func.strftime("%Y-%m", Job.end).label("month"),
+                Job.account
+            ).distinct()
+
+            if start:
+                monthly_query = monthly_query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+            if end:
+                monthly_query = monthly_query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+
+            monthly_results = monthly_query.all()
+            
+            quarterly_projects = {} # key: "YYYY-Q", value: set of projects
+            for month_str, project in monthly_results:
+                if not project or not month_str:
+                    continue
+                year, month = map(int, month_str.split('-'))
+                quarter = (month - 1) // 3 + 1
+                q_key = f"{year}-Q{quarter}"
+                if q_key not in quarterly_projects:
+                    quarterly_projects[q_key] = set()
+                quarterly_projects[q_key].add(project)
+            
+            results = [{"period": key, "project_count": len(projects)} for key, projects in quarterly_projects.items()]
+            return sorted(results, key=lambda x: x['period'])
+
+        if period == "day":
+            period_func = func.strftime("%Y-%m-%d", Job.end)
+        elif period == "month":
+            period_func = func.strftime("%Y-%m", Job.end)
+        else:
+            raise ValueError("Invalid period specified. Must be 'day', 'month', or 'quarter'.")
+
+        query = self.session.query(
+            period_func.label("period"),
+            func.count(func.distinct(Job.account)).label("project_count")
+        )
+
+        if start:
+            query = query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            query = query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+
+        results = query.group_by("period").order_by("period").all()
+
+        return [{"period": row[0], "project_count": row[1]} for row in results]
+
+    def unique_users_by_period(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get the number of unique users by period in a date range.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day', 'month', 'quarter')
+
+        Returns:
+            A list of dicts with 'period' and 'user_count' keys.
+        """
+        if period == "quarter":
+            # For quarters, get monthly data and aggregate
+            monthly_query = self.session.query(
+                func.strftime("%Y-%m", Job.end).label("month"),
+                Job.user
+            ).distinct()
+
+            if start:
+                monthly_query = monthly_query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+            if end:
+                monthly_query = monthly_query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+
+            monthly_results = monthly_query.all()
+            
+            quarterly_users = {} # key: "YYYY-Q", value: set of users
+            for month_str, user in monthly_results:
+                if not user or not month_str:
+                    continue
+                year, month = map(int, month_str.split('-'))
+                quarter = (month - 1) // 3 + 1
+                q_key = f"{year}-Q{quarter}"
+                if q_key not in quarterly_users:
+                    quarterly_users[q_key] = set()
+                quarterly_users[q_key].add(user)
+            
+            results = [{"period": key, "user_count": len(users)} for key, users in quarterly_users.items()]
+            return sorted(results, key=lambda x: x['period'])
+
+
+        if period == "day":
+            period_func = func.strftime("%Y-%m-%d", Job.end)
+        elif period == "month":
+            period_func = func.strftime("%Y-%m", Job.end)
+        else:
+            raise ValueError("Invalid period specified. Must be 'day', 'month', or 'quarter'.")
+
+        query = self.session.query(
+            period_func.label("period"),
+            func.count(func.distinct(Job.user)).label("user_count")
+        )
+
+        if start:
+            query = query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            query = query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+
+        results = query.group_by("period").order_by("period").all()
+
+        return [{"period": row[0], "user_count": row[1]} for row in results]
 
     def top_users_by_jobs(
         self,
