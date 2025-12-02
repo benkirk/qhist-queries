@@ -300,7 +300,11 @@ RESOURCE_REPORTS = [
             ColumnSpec("2-4GB", "2-4GB", 12, ".1f"),
             ColumnSpec("4-8GB", "4-8GB", 12, ".1f"),
             ColumnSpec("8-16GB", "8-16GB", 12, ".1f"),
-            ColumnSpec(">16GB", ">16GB", 0, ".1f"),
+            ColumnSpec("16-32GB", "16-32GB", 12, ".1f"),
+            ColumnSpec("32-64GB", "32-64GB", 12, ".1f"),
+            ColumnSpec("64-128GB", "64-128GB", 12, ".1f"),
+            ColumnSpec("128-256GB", "128-256GB", 12, ".1f"),
+            ColumnSpec(">256GB", ">256GB", 0, ".1f"),
         ]
     ),
     ReportConfig(
@@ -318,7 +322,11 @@ RESOURCE_REPORTS = [
             ColumnSpec("2-4GB", "2-4GB", 12, ".1f"),
             ColumnSpec("4-8GB", "4-8GB", 12, ".1f"),
             ColumnSpec("8-16GB", "8-16GB", 12, ".1f"),
-            ColumnSpec(">16GB", ">16GB", 0, ".1f"),
+            ColumnSpec("16-32GB", "16-32GB", 12, ".1f"),
+            ColumnSpec("32-64GB", "32-64GB", 12, ".1f"),
+            ColumnSpec("64-128GB", "64-128GB", 12, ".1f"),
+            ColumnSpec("128-256GB", "128-256GB", 12, ".1f"),
+            ColumnSpec(">256GB", ">256GB", 0, ".1f"),
         ]
     ),
 

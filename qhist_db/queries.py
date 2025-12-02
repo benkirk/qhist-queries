@@ -144,7 +144,23 @@ class QueryConfig:
                 Job.memory / (Job.mpiprocs * Job.numnodes) >= (8 * BYTES_PER_GB),
                 Job.memory / (Job.mpiprocs * Job.numnodes) < (16 * BYTES_PER_GB)
             ),
-            ">16GB": Job.memory / (Job.mpiprocs * Job.numnodes) >= (16 * BYTES_PER_GB),
+            "16-32GB": and_(
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= (16 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.numnodes) < (32 * BYTES_PER_GB)
+            ),
+            "32-64GB": and_(
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= (32 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.numnodes) < (64 * BYTES_PER_GB)
+            ),
+            "64-128GB": and_(
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= (64 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.numnodes) < (128 * BYTES_PER_GB)
+            ),
+            "128-256GB": and_(
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= (128 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.numnodes) < (256 * BYTES_PER_GB)
+            ),
+            ">256GB": Job.memory / (Job.mpiprocs * Job.numnodes) >= (256 * BYTES_PER_GB),
         }
 
 
