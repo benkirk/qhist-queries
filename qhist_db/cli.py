@@ -251,8 +251,8 @@ RESOURCE_REPORTS = [
     # Duration reports
     ReportConfig(
         command_name="gpu-job-durations",
-        description="GPU job durations by day",
-        query_method="job_durations_by_day",
+        description="GPU job durations by period",
+        query_method="job_durations",
         query_params={"resource_type": "gpu"},
         filename_base="gpu_job_durations",
         columns=[
@@ -268,8 +268,8 @@ RESOURCE_REPORTS = [
     ),
     ReportConfig(
         command_name="cpu-job-durations",
-        description="CPU job durations by day",
-        query_method="job_durations_by_day",
+        description="CPU job durations by period",
+        query_method="job_durations",
         query_params={"resource_type": "cpu"},
         filename_base="cpu_job_durations",
         columns=[
@@ -287,8 +287,8 @@ RESOURCE_REPORTS = [
     # Memory-per-rank histogram reports
     ReportConfig(
         command_name="cpu-job-memory-per-rank",
-        description="CPU job memory-per-rank histogram by day",
-        query_method="job_memory_per_rank_by_day",
+        description="CPU job memory-per-rank histogram by period",
+        query_method="job_memory_per_rank",
         query_params={"resource_type": "cpu"},
         filename_base="cpu_job_memory_per_rank",
         columns=[
@@ -305,8 +305,8 @@ RESOURCE_REPORTS = [
     ),
     ReportConfig(
         command_name="gpu-job-memory-per-rank",
-        description="GPU job memory-per-rank histogram by day",
-        query_method="job_memory_per_rank_by_day",
+        description="GPU job memory-per-rank histogram by period",
+        query_method="job_memory_per_rank",
         query_params={"resource_type": "gpu"},
         filename_base="gpu_job_memory_per_rank",
         columns=[
@@ -401,11 +401,11 @@ RESOURCE_REPORTS = [
         ]
     ),
 
-    # Usage history report (keeping old method for now)
+    # Usage history report
     ReportConfig(
         command_name="usage-history",
-        description="Daily usage history",
-        query_method="usage_history_by_day",
+        description="Usage history by period",
+        query_method="usage_history",
         query_params={},
         filename_base="usage_history",
         columns=[
@@ -511,7 +511,7 @@ def create_resource_command(config: ReportConfig):
         query_params = dict(config.query_params)
 
         # Add period parameter for time-series queries that support it
-        if config.query_method in ['usage_history_by_day', 'job_durations_by_day', 'job_memory_per_rank_by_day']:
+        if config.query_method in ['usage_history', 'job_durations', 'job_memory_per_rank']:
             query_params['period'] = group_by
 
         # Execute query (single or multi-machine)

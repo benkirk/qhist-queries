@@ -111,7 +111,7 @@ class QueryConfig:
         """Get memory-per-rank bucket definitions (mixed MB/GB units).
 
         Returns buckets for memory per rank histogram using Job.memory
-        (actual memory used) divided by mpiprocs.
+        (actual memory used) divided by (mpiprocs * numnodes).
 
         Returns as a static method to avoid issues with Job reference at import time.
         """
@@ -119,32 +119,32 @@ class QueryConfig:
         BYTES_PER_MB = 1024 * 1024
 
         return {
-            "<128MB": Job.memory / Job.mpiprocs < (128 * BYTES_PER_MB),
+            "<128MB": Job.memory / (Job.mpiprocs * Job.numnodes) < (128 * BYTES_PER_MB),
             "128MB-512MB": and_(
-                Job.memory / Job.mpiprocs >= (128 * BYTES_PER_MB),
-                Job.memory / Job.mpiprocs < (512 * BYTES_PER_MB)
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= (128 * BYTES_PER_MB),
+                Job.memory / (Job.mpiprocs * Job.numnodes) < (512 * BYTES_PER_MB)
             ),
             "512MB-1GB": and_(
-                Job.memory / Job.mpiprocs >= (512 * BYTES_PER_MB),
-                Job.memory / Job.mpiprocs < BYTES_PER_GB
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= (512 * BYTES_PER_MB),
+                Job.memory / (Job.mpiprocs * Job.numnodes) < BYTES_PER_GB
             ),
             "1-2GB": and_(
-                Job.memory / Job.mpiprocs >= BYTES_PER_GB,
-                Job.memory / Job.mpiprocs < (2 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= BYTES_PER_GB,
+                Job.memory / (Job.mpiprocs * Job.numnodes) < (2 * BYTES_PER_GB)
             ),
             "2-4GB": and_(
-                Job.memory / Job.mpiprocs >= (2 * BYTES_PER_GB),
-                Job.memory / Job.mpiprocs < (4 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= (2 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.numnodes) < (4 * BYTES_PER_GB)
             ),
             "4-8GB": and_(
-                Job.memory / Job.mpiprocs >= (4 * BYTES_PER_GB),
-                Job.memory / Job.mpiprocs < (8 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= (4 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.numnodes) < (8 * BYTES_PER_GB)
             ),
             "8-16GB": and_(
-                Job.memory / Job.mpiprocs >= (8 * BYTES_PER_GB),
-                Job.memory / Job.mpiprocs < (16 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.numnodes) >= (8 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.numnodes) < (16 * BYTES_PER_GB)
             ),
-            ">16GB": Job.memory / Job.mpiprocs >= (16 * BYTES_PER_GB),
+            ">16GB": Job.memory / (Job.mpiprocs * Job.numnodes) >= (16 * BYTES_PER_GB),
         }
 
 
@@ -468,14 +468,14 @@ class JobQueries:
             for row in results
         ]
 
-    def job_durations_by_day(
+    def job_durations(
         self,
         resource_type: str,
         start: Optional[date] = None,
         end: Optional[date] = None,
         period: str = "day",
     ) -> List[Dict[str, Any]]:
-        """Get job duration statistics by day or month.
+        """Get job duration statistics by period.
 
         Generic factory method replacing duration queries.
 
@@ -489,10 +489,10 @@ class JobQueries:
             List of dicts with keys: 'date', '<30s', '30s-30m', '30-60m', '1-5h', '5-12h', '12-18h', '>18h'
 
         Examples:
-            >>> # GPU job durations by day (replaces gpu_job_durations_by_day)
-            >>> queries.job_durations_by_day('gpu', start_date, end_date)
+            >>> # GPU job durations by day
+            >>> queries.job_durations('gpu', start_date, end_date)
             >>> # CPU job durations by month
-            >>> queries.job_durations_by_day('cpu', start_date, end_date, period='month')
+            >>> queries.job_durations('cpu', start_date, end_date, period='month')
         """
         # Determine queues and hours field (machine-specific)
         if resource_type == 'cpu':
@@ -536,17 +536,17 @@ class JobQueries:
             for row in results
         ]
 
-    def job_memory_per_rank_by_day(
+    def job_memory_per_rank(
         self,
         resource_type: str,
         start: Optional[date] = None,
         end: Optional[date] = None,
         period: str = "day",
     ) -> List[Dict[str, Any]]:
-        """Get job memory-per-rank histogram by day or month.
+        """Get job memory-per-rank histogram by period.
 
-        Calculates memory per rank as memory_bytes / mpiprocs.
-        Filters out jobs where mpiprocs is 0 or NULL.
+        Calculates memory per rank as memory_bytes / (mpiprocs * numnodes).
+        Filters out jobs where mpiprocs or numnodes is 0 or NULL.
 
         Args:
             resource_type: 'cpu' | 'gpu' - type of resources to filter
@@ -559,9 +559,9 @@ class JobQueries:
 
         Examples:
             >>> # CPU job memory-per-rank by day
-            >>> queries.job_memory_per_rank_by_day('cpu', start_date, end_date)
+            >>> queries.job_memory_per_rank('cpu', start_date, end_date)
             >>> # GPU job memory-per-rank by month
-            >>> queries.job_memory_per_rank_by_day('gpu', start_date, end_date, period='month')
+            >>> queries.job_memory_per_rank('gpu', start_date, end_date, period='month')
         """
         # Determine queues and hours field (machine-specific)
         if resource_type == 'cpu':
@@ -595,6 +595,8 @@ class JobQueries:
             Job.queue.in_(queues),
             Job.mpiprocs.isnot(None),  # Filter NULL
             Job.mpiprocs > 0,           # Filter zero (prevents division by zero)
+            Job.numnodes.isnot(None),   # Filter NULL
+            Job.numnodes > 0,            # Filter zero (prevents division by zero)
             Job.memory.isnot(None)      # Filter NULL memory
         )
 
@@ -661,7 +663,7 @@ class JobQueries:
             end=end
         )
 
-    def usage_history_by_day(
+    def usage_history(
         self,
         start: Optional[date] = None,
         end: Optional[date] = None,

@@ -93,14 +93,26 @@ Add to `JobQueries` class:
    - Similar parameter structure
    - Returns: `[{range_label, job_count, user_count, hours}]`
 
-4. **`job_durations_by_day(resource_type, start, end)`**
+4. **`job_durations(resource_type, start, end, period='day')`**
    - Replaces: `gpu_job_durations_by_day`, `cpu_job_durations_by_day`
-   - Parameters: `resource_type`: 'cpu' | 'gpu' | 'all'
+   - Parameters:
+     - `resource_type`: 'cpu' | 'gpu' | 'all'
+     - `period`: 'day' | 'month'
    - Returns: `[{date, <30s, 30s-30m, ...}]`
 
-5. **`usage_history(start, end, machines=None)`** ✨ NEW
+5. **`job_memory_per_rank(resource_type, start, end, period='day')`** ✨ NEW
+   - Memory usage per rank histogram
+   - Calculates memory_bytes / (mpiprocs * numnodes)
+   - Parameters:
+     - `resource_type`: 'cpu' | 'gpu'
+     - `period`: 'day' | 'month'
+   - Returns: `[{date, <128MB, 128MB-512MB, ...}]`
+
+6. **`usage_history(start, end, period='day', machines=None)`** ✨ NEW
    - Enhanced version of `usage_history_by_day`
    - Can aggregate multiple machines if `machines=['casper', 'derecho']`
+   - Parameters:
+     - `period`: 'day' | 'month'
    - Returns combined daily statistics
 
 **Test**: Integration tests for each new method
@@ -112,7 +124,7 @@ Add to `JobQueries` class:
 - All wait methods (3 methods)
 - All size methods (3 methods)
 - All duration methods (2 methods)
-- Old implementations of `usage_history_by_day`
+- Old implementations with `_by_day` suffix (renamed to remove suffix)
 
 Keep these unchanged:
 - `jobs_by_user`, `jobs_by_account`, `jobs_by_queue` (still useful as-is)
