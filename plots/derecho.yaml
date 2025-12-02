@@ -1,0 +1,9 @@
+---
+  machine: "Derecho"
+  numnodes: 2488
+  numcpunodes: 2488
+  numgpunodes: 82
+  corespnode: 128
+  gpuspnode: 4
+  acctdir: "/ncar/pbs/accounting"
+  dpi: 300
