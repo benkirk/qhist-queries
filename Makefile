@@ -15,8 +15,8 @@ PYTHON := python3
 SCRIPTS := scripts
 DATA_DIR := data
 
-# Default date is today in YYYYMMDD format
-DATE ?= $(shell date +%Y%m%d)
+# Default date is today in YYYY-MM-DD format
+DATE ?= $(shell date +%Y-%m-%d)
 
 .PHONY: help init-db sync-casper sync-derecho sync-all clean
 
@@ -35,13 +35,13 @@ help:
 	@echo "  $(DATA_DIR)/derecho.db  - Derecho jobs"
 	@echo ""
 	@echo "Variables:"
-	@echo "  DATE=YYYYMMDD        Date to sync (default: today)"
-	@echo "  START=YYYYMMDD       Start date for range sync"
-	@echo "  END=YYYYMMDD         End date for range sync"
+	@echo "  DATE=YYYY-MM-DD        Date to sync (default: today)"
+	@echo "  START=YYYY-MM-DD       Start date for range sync"
+	@echo "  END=YYYY-MM-DD         End date for range sync"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make sync-derecho DATE=20251121"
-	@echo "  make sync-all START=20251101 END=20251121"
+	@echo "  make sync-derecho DATE=2025-11-21"
+	@echo "  make sync-all START=2025-11-01 END=2025-11-21"
 
 init-db:
 	@echo "Initializing databases..."

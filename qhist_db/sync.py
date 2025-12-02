@@ -43,9 +43,9 @@ def sync_jobs(
     Args:
         session: SQLAlchemy session
         machine: Machine name ('casper' or 'derecho')
-        period: Single date in YYYYMMDD format
-        start_date: Start date for range (YYYYMMDD)
-        end_date: End date for range (YYYYMMDD)
+        period: Single date in YYYY-MM-DD format
+        start_date: Start date for range (YYYY-MM-DD)
+        end_date: End date for range (YYYY-MM-DD)
         dry_run: If True, don't actually insert records
 
     Returns:
@@ -110,9 +110,9 @@ def sync_jobs_bulk(
     Args:
         session: SQLAlchemy session
         machine: Machine name ('casper' or 'derecho')
-        period: Single date in YYYYMMDD format
-        start_date: Start date for range (YYYYMMDD)
-        end_date: End date for range (YYYYMMDD)
+        period: Single date in YYYY-MM-DD format
+        start_date: Start date for range (YYYY-MM-DD)
+        end_date: End date for range (YYYY-MM-DD)
         dry_run: If True, don't actually insert records
         batch_size: Number of records to insert per batch
         verbose: If True, print progress for each day
@@ -211,7 +211,7 @@ def _sync_single_day(
     Args:
         session: SQLAlchemy session
         machine: Machine name
-        period: Date in YYYYMMDD format
+        period: Date in YYYY-MM-DD format
         dry_run: If True, don't insert
         batch_size: Batch size for inserts
         verbose: If True, print warnings

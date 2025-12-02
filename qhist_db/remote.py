@@ -21,9 +21,9 @@ def run_qhist_command(
 
     Args:
         machine: Machine name ('casper' or 'derecho')
-        period: Single date in YYYYMMDD format
-        start_date: Start date for range (YYYYMMDD)
-        end_date: End date for range (YYYYMMDD)
+        period: Single date in YYYY-MM-DD format
+        start_date: Start date for range (YYYY-MM-DD)
+        end_date: End date for range (YYYY-MM-DD)
         timeout: SSH command timeout in seconds
 
     Returns:
@@ -34,7 +34,7 @@ def run_qhist_command(
         subprocess.TimeoutExpired: If command exceeds timeout
     """
     # Build the qhist command
-    # qhist uses -p/--period with format: YYYYMMDD for single day, YYYYMMDD-YYYYMMDD for range
+    # qhist uses -p/--period with format: YYYY-MM-DD for single day, YYYY-MM-DD-YYYY-MM-DD for range
     cmd = ["ssh", machine, "qhist", "-J", f"-f={ALL_FIELDS}"]
 
     if period:
@@ -73,9 +73,9 @@ def fetch_jobs_ssh(
 
     Args:
         machine: Machine name ('casper' or 'derecho')
-        period: Single date in YYYYMMDD format
-        start_date: Start date for range (YYYYMMDD)
-        end_date: End date for range (YYYYMMDD)
+        period: Single date in YYYY-MM-DD format
+        start_date: Start date for range (YYYY-MM-DD)
+        end_date: End date for range (YYYY-MM-DD)
         timeout: SSH command timeout in seconds
 
     Yields:
