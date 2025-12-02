@@ -214,9 +214,9 @@ This will demonstrate all query methods with real data from your Derecho databas
 
 ## CLI Tool
 
-The `qhist` command-line interface provides convenient access to job history data.
+The `qhist-report` command-line interface provides convenient access to job history data.
 
-### `qhist history`
+### `qhist-report history`
 
 The `history` command provides a time-series view of job data.
 
@@ -233,12 +233,12 @@ The `history` command provides a time-series view of job data.
 
 **Examples:**
 ```bash
-qhist history --start-date 2025-11-01 --end-date 2025-11-30 unique-users
-qhist history --start-date 2025-10-01 --end-date 2025-12-31 --group-by quarter unique-projects
-qhist history --start-date 2025-11-01 --end-date 2025-11-07 --group-by day jobs-per-user
+qhist-report history --start-date 2025-11-01 --end-date 2025-11-30 unique-users
+qhist-report history --start-date 2025-10-01 --end-date 2025-12-31 --group-by quarter unique-projects
+qhist-report history --start-date 2025-11-01 --end-date 2025-11-07 --group-by day jobs-per-user
 ```
 
-### `qhist resource`
+### `qhist-report resource`
 
 The `resource` command generates reports on resource usage.
 
@@ -271,19 +271,19 @@ The `resource` command generates reports on resource usage.
 **Examples:**
 ```bash
 # Generate job sizes report (default .dat format)
-qhist resource --start-date 2025-11-01 --end-date 2025-11-30 job-sizes
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 job-sizes
 
 # Generate CPU job durations with custom output directory
-qhist resource --start-date 2025-11-01 --end-date 2025-11-30 --output-dir reports/ cpu-job-durations
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 --output-dir reports/ cpu-job-durations
 
 # Export GPU job sizes as JSON
-qhist resource --start-date 2025-11-01 --end-date 2025-11-30 --format json gpu-job-sizes
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 --format json gpu-job-sizes
 
 # Export user CPU usage as markdown table
-qhist resource --start-date 2025-11-01 --end-date 2025-11-30 --format md pie-user-cpu
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 --format md pie-user-cpu
 
 # Generate memory-based job size analysis as CSV
-qhist resource --start-date 2025-11-01 --end-date 2025-11-30 --format csv memory-job-sizes
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 --format csv memory-job-sizes
 ```
 
 ## Requirements

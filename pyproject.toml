@@ -16,7 +16,7 @@ dev = [
 
 [project.scripts]
 qhist-sync = "scripts.sync_jobs:main"
-qhist = "qhist_db.cli:cli"
+qhist-report = "qhist_db.cli:cli"
 
 [build-system]
 requires = ["setuptools>=61.0"]
