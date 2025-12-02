@@ -22,9 +22,45 @@ from sqlalchemy import case
 class QueryConfig:
     """Centralized configuration for query patterns and constants."""
 
-    # Queue definitions
-    CPU_QUEUES = ['cpu', 'cpudev']
-    GPU_QUEUES = ['gpu', 'gpudev', 'pgpu']
+    # Machine-specific queue definitions
+    MACHINE_QUEUES = {
+        'derecho': {
+            'cpu': ['cpu', 'cpudev'],
+            'gpu': ['gpu', 'gpudev', 'pgpu']
+        },
+        'casper': {
+            'cpu': ['htc', 'gdex', 'largemem', 'vis', 'rda'],
+            'gpu': ['nvgpu', 'gpgpu', 'a100', 'h100', 'l40', 'amdgpu']
+        }
+    }
+
+    # Legacy attributes for backward compatibility (default to Derecho)
+    CPU_QUEUES = MACHINE_QUEUES['derecho']['cpu']
+    GPU_QUEUES = MACHINE_QUEUES['derecho']['gpu']
+
+    @staticmethod
+    def get_cpu_queues(machine: str) -> list:
+        """Get CPU queue names for a specific machine.
+
+        Args:
+            machine: Machine name ('casper' or 'derecho')
+
+        Returns:
+            List of CPU queue names for the machine
+        """
+        return QueryConfig.MACHINE_QUEUES.get(machine.lower(), {}).get('cpu', QueryConfig.CPU_QUEUES)
+
+    @staticmethod
+    def get_gpu_queues(machine: str) -> list:
+        """Get GPU queue names for a specific machine.
+
+        Args:
+            machine: Machine name ('casper' or 'derecho')
+
+        Returns:
+            List of GPU queue names for the machine
+        """
+        return QueryConfig.MACHINE_QUEUES.get(machine.lower(), {}).get('gpu', QueryConfig.GPU_QUEUES)
 
     # GPU resource ranges
     GPU_RANGES = [
@@ -84,13 +120,15 @@ class JobQueries:
         >>> jobs = queries.jobs_by_user("jdoe", start=date(2024, 1, 1))
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, machine: str = 'derecho'):
         """Initialize query interface.
 
         Args:
             session: SQLAlchemy session for database access
+            machine: Machine name ('casper' or 'derecho') for queue filtering
         """
         self.session = session
+        self.machine = machine.lower()
 
     def _apply_date_filter(self, query, start: Optional[date], end: Optional[date]):
         """Apply consistent date filtering to a query.
@@ -177,15 +215,15 @@ class JobQueries:
             >>> # GPU usage by account (replaces pie_group_gpu)
             >>> queries.usage_by_group('gpu', 'account', start_date, end_date)
         """
-        # Determine queues and hours field
+        # Determine queues and hours field (machine-specific)
         if resource_type == 'cpu':
-            queues = QueryConfig.CPU_QUEUES
+            queues = QueryConfig.get_cpu_queues(self.machine)
             hours_field = JobCharged.cpu_hours
         elif resource_type == 'gpu':
-            queues = QueryConfig.GPU_QUEUES
+            queues = QueryConfig.get_gpu_queues(self.machine)
             hours_field = JobCharged.gpu_hours
         else:  # 'all'
-            queues = QueryConfig.CPU_QUEUES + QueryConfig.GPU_QUEUES
+            queues = QueryConfig.get_cpu_queues(self.machine) + QueryConfig.get_gpu_queues(self.machine)
             # For 'all', sum both cpu_hours and gpu_hours
             hours_field = func.coalesce(JobCharged.cpu_hours, 0) + func.coalesce(JobCharged.gpu_hours, 0)
 
@@ -237,13 +275,13 @@ class JobQueries:
             >>> # CPU job waits by node (replaces cpu_job_waits_by_node_ranges)
             >>> queries.job_waits_by_resource('cpu', 'node', start_date, end_date)
         """
-        # Determine queues
+        # Determine queues (machine-specific)
         if resource_type == 'cpu':
-            queues = QueryConfig.CPU_QUEUES
+            queues = QueryConfig.get_cpu_queues(self.machine)
         elif resource_type == 'gpu':
-            queues = QueryConfig.GPU_QUEUES
+            queues = QueryConfig.get_gpu_queues(self.machine)
         else:  # 'all'
-            queues = QueryConfig.CPU_QUEUES + QueryConfig.GPU_QUEUES
+            queues = QueryConfig.get_cpu_queues(self.machine) + QueryConfig.get_gpu_queues(self.machine)
 
         # Determine ranges and field
         if range_type == 'gpu':
@@ -324,15 +362,15 @@ class JobQueries:
             >>> # CPU job sizes by node (replaces cpu_job_sizes_by_node_ranges)
             >>> queries.job_sizes_by_resource('cpu', 'node', start_date, end_date)
         """
-        # Determine queues and hours field
+        # Determine queues and hours field (machine-specific)
         if resource_type == 'cpu':
-            queues = QueryConfig.CPU_QUEUES
+            queues = QueryConfig.get_cpu_queues(self.machine)
             hours_field = JobCharged.cpu_hours
         elif resource_type == 'gpu':
-            queues = QueryConfig.GPU_QUEUES
+            queues = QueryConfig.get_gpu_queues(self.machine)
             hours_field = JobCharged.gpu_hours
         else:  # 'all'
-            queues = QueryConfig.CPU_QUEUES + QueryConfig.GPU_QUEUES
+            queues = QueryConfig.get_cpu_queues(self.machine) + QueryConfig.get_gpu_queues(self.machine)
             hours_field = func.coalesce(JobCharged.cpu_hours, 0) + func.coalesce(JobCharged.gpu_hours, 0)
 
         # Determine ranges and field
@@ -413,15 +451,15 @@ class JobQueries:
             >>> # CPU job durations (replaces cpu_job_durations_by_day)
             >>> queries.job_durations_by_day('cpu', start_date, end_date)
         """
-        # Determine queues and hours field
+        # Determine queues and hours field (machine-specific)
         if resource_type == 'cpu':
-            queues = QueryConfig.CPU_QUEUES
+            queues = QueryConfig.get_cpu_queues(self.machine)
             hours_field = JobCharged.cpu_hours
         elif resource_type == 'gpu':
-            queues = QueryConfig.GPU_QUEUES
+            queues = QueryConfig.get_gpu_queues(self.machine)
             hours_field = JobCharged.gpu_hours
         else:  # 'all'
-            queues = QueryConfig.CPU_QUEUES + QueryConfig.GPU_QUEUES
+            queues = QueryConfig.get_cpu_queues(self.machine) + QueryConfig.get_gpu_queues(self.machine)
             hours_field = func.coalesce(JobCharged.cpu_hours, 0) + func.coalesce(JobCharged.gpu_hours, 0)
 
         # Get duration buckets
@@ -513,8 +551,8 @@ class JobQueries:
         Returns:
             A list of dicts with usage history statistics for each day.
         """
-        cpu_queues = ['cpu', 'cpudev']
-        gpu_queues = ['gpu', 'gpudev', 'pgpu']
+        cpu_queues = QueryConfig.get_cpu_queues(self.machine)
+        gpu_queues = QueryConfig.get_gpu_queues(self.machine)
 
         # Common subquery for date filtering
         date_filter = []
@@ -1122,6 +1160,58 @@ class JobQueries:
             }
             for queue, count, elapsed, avg in result
         ]
+
+    @classmethod
+    def multi_machine_query(
+        cls,
+        machines: List[str],
+        method_name: str,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """Execute a query across multiple machines and aggregate results.
+
+        This class method allows running the same query against multiple machine
+        databases (casper, derecho) and combining the results with machine labels.
+
+        Args:
+            machines: List of machine names to query (e.g., ['casper', 'derecho'])
+            method_name: Name of the JobQueries method to call
+            **kwargs: Additional keyword arguments to pass to the query method
+
+        Returns:
+            List of result dictionaries, each tagged with a 'machine' field
+
+        Example:
+            >>> results = JobQueries.multi_machine_query(
+            ...     machines=['casper', 'derecho'],
+            ...     method_name='usage_by_group',
+            ...     resource_type='cpu',
+            ...     group_by='user',
+            ...     start=date(2025, 11, 1),
+            ...     end=date(2025, 11, 30)
+            ... )
+            >>> # Results contain data from both machines with 'machine' field
+        """
+        from .database import get_session
+
+        all_results = []
+
+        for machine in machines:
+            session = get_session(machine)
+            try:
+                queries = cls(session, machine=machine)
+                method = getattr(queries, method_name)
+                results = method(**kwargs)
+
+                # Tag each result with the machine name
+                for row in results:
+                    row['machine'] = machine
+
+                all_results.extend(results)
+            finally:
+                session.close()
+
+        return all_results
 
 
 if __name__ == "__main__":

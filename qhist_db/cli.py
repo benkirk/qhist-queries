@@ -468,17 +468,30 @@ def create_resource_command(config: ReportConfig):
         output_dir = ctx.obj['output_dir']
         output_format = ctx.obj.get('output_format', 'dat')
 
-        # Execute query
-        session = get_session(machine)
-        queries = JobQueries(session)
-        query_func = getattr(queries, config.query_method)
-        data = query_func(**config.query_params, start=start_date, end=end_date)
+        # Execute query (single or multi-machine)
+        if machine == "all":
+            # Multi-machine query
+            machines = ["casper", "derecho"]
+            data = JobQueries.multi_machine_query(
+                machines=machines,
+                method_name=config.query_method,
+                **config.query_params,
+                start=start_date,
+                end=end_date
+            )
+            machine_label = "All"
+        else:
+            # Single machine query
+            session = get_session(machine)
+            queries = JobQueries(session, machine=machine)
+            query_func = getattr(queries, config.query_method)
+            data = query_func(**config.query_params, start=start_date, end=end_date)
+            session.close()
+            machine_label = machine
 
         # Write output
-        filepath = _write_report(data, config, machine, start_date, end_date, output_dir, output_format)
+        filepath = _write_report(data, config, machine_label, start_date, end_date, output_dir, output_format)
         click.echo(f"Report saved to {filepath}")
-
-        session.close()
 
     # Set command metadata for Click
     command_func.__name__ = config.command_name.replace("-", "_")
@@ -489,7 +502,7 @@ def create_resource_command(config: ReportConfig):
 @click.group(invoke_without_command=True)
 @click.option("--start-date", type=str, callback=parse_date, help="Start date for analysis (YYYY-MM-DD).")
 @click.option("--end-date", type=str, callback=parse_date, help="End date for analysis (YYYY-MM-DD).")
-@click.option("-m", "--machine", type=click.Choice(["casper", "derecho"]), default="derecho", help="The machine to query.")
+@click.option("-m", "--machine", type=click.Choice(["casper", "derecho", "all"]), default="derecho", help="The machine to query (use 'all' for both).")
 @click.option("--output-dir", type=click.Path(file_okay=False, dir_okay=True, writable=True, resolve_path=True), default=".", help="Directory to save the reports.")
 @click.option("--format", "output_format", type=click.Choice(["dat", "json", "csv", "md"]), default="dat", help="Output format (dat, json, csv, md).")
 @click.pass_context
@@ -502,7 +515,8 @@ def resource(ctx, start_date, end_date, machine, output_dir, output_format):
     ctx.obj['output_dir'] = output_dir
     ctx.obj['output_format'] = output_format
     if ctx.invoked_subcommand is None:
-        click.echo(f"Resource view for {machine} from {start_date} to {end_date}, output to {output_dir}")
+        machines_desc = "all machines" if machine == "all" else machine
+        click.echo(f"Resource view for {machines_desc} from {start_date} to {end_date}, output to {output_dir}")
 
 # Dynamically register all resource commands from configuration
 for report_config in RESOURCE_REPORTS:
