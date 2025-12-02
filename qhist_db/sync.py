@@ -140,7 +140,7 @@ def sync_jobs_bulk(
     if start_date and end_date:
         days = date_range(start_date, end_date)
         ndays = date_range_length(start_date, end_date)
-        iterator = track(days, total=ndays, description="Processing...") if track and verbose else dates
+        iterator = track(days, total=ndays, description="Processing...") if track and verbose else days
         for day in iterator:
             day_date = parse_date_string(day).date()
 
