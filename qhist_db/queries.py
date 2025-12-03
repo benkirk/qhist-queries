@@ -609,12 +609,13 @@ class JobQueries:
             ]
         ).join(JobCharged, Job.id == JobCharged.id).filter(
             Job.queue.in_(queues),
-            Job.mpiprocs.isnot(None),  # Filter NULL
-            Job.mpiprocs > 0,          # Filter zero (prevents division by zero)
-            Job.ompthreads > 0,        # Filter zero (prevents division by zero)
-            Job.numnodes.isnot(None),  # Filter NULL
-            Job.numnodes > 0,          # Filter zero (prevents division by zero)
-            Job.memory.isnot(None)     # Filter NULL memory
+            Job.mpiprocs.isnot(None),   # Filter NULL
+            Job.mpiprocs > 0,           # Filter zero (prevents division by zero)
+            Job.ompthreads.isnot(None), # Filter zero (prevents division by zero)
+            Job.ompthreads > 0,         # Filter zero (prevents division by zero)
+            Job.numnodes.isnot(None),   # Filter NULL
+            Job.numnodes > 0,           # Filter zero (prevents division by zero)
+            Job.memory.isnot(None)      # Filter NULL memory
         )
 
         query = self._apply_date_filter(query, start, end)
