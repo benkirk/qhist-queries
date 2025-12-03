@@ -22,9 +22,9 @@ def parse_args():
 
     parser.add_argument(
         "-m", "--machine",
-        required=True,
+        default="all",
         choices=["casper", "derecho", "all"],
-        help="Machine to sync from (use 'all' to sync all machines)"
+        help="Machine to sync from (default: all)"
     )
 
     # Date options
