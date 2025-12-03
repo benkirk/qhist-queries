@@ -212,6 +212,80 @@ python -m qhist_db.queries
 
 This will demonstrate all query methods with real data from your Derecho database.
 
+## CLI Tool
+
+The `qhist-report` command-line interface provides convenient access to job history data.
+
+### `qhist-report history`
+
+The `history` command provides a time-series view of job data.
+
+**Options:**
+- `--start-date YYYY-MM-DD`: Start date for analysis.
+- `--end-date YYYY-MM-DD`: End date for analysis.
+- `--group-by [day|month|quarter]`: Group results by day, month, or quarter (default: `day`).
+- `-m [casper|derecho]`: The machine to query (default: `derecho`).
+
+**Subcommands:**
+- `unique-users`: Prints the number of unique users.
+- `unique-projects`: Prints the number of unique projects.
+- `jobs-per-user`: Prints the number of jobs per user per account.
+
+**Examples:**
+```bash
+qhist-report history --start-date 2025-11-01 --end-date 2025-11-30 unique-users
+qhist-report history --start-date 2025-10-01 --end-date 2025-12-31 --group-by quarter unique-projects
+qhist-report history --start-date 2025-11-01 --end-date 2025-11-07 --group-by day jobs-per-user
+```
+
+### `qhist-report resource`
+
+The `resource` command generates reports on resource usage.
+
+**Options:**
+- `--start-date YYYY-MM-DD`: Start date for analysis.
+- `--end-date YYYY-MM-DD`: End date for analysis.
+- `-m [casper|derecho]`: The machine to query (default: `derecho`).
+- `--output-dir PATH`: Directory to save the reports (default: `.`).
+- `--format [dat|json|csv|md]`: Output format - dat (default), json, csv, or md (markdown).
+
+**Subcommands:**
+- `job-sizes`: Job sizes by core count
+- `job-waits`: Job waits by core count
+- `cpu-job-sizes`: CPU job sizes by node count
+- `cpu-job-waits`: CPU job waits by node count
+- `cpu-job-durations`: CPU job durations by day
+- `gpu-job-sizes`: GPU job sizes by GPU count
+- `gpu-job-waits`: GPU job waits by GPU count
+- `gpu-job-durations`: GPU job durations by day
+- `memory-job-sizes`: Job sizes by memory requirement
+- `memory-job-waits`: Job waits by memory requirement
+- `pie-user-cpu`: CPU usage by user
+- `pie-user-gpu`: GPU usage by user
+- `pie-proj-cpu`: CPU usage by project (account)
+- `pie-proj-gpu`: GPU usage by project (account)
+- `pie-group-cpu`: CPU usage by account
+- `pie-group-gpu`: GPU usage by account
+- `usage-history`: Daily usage history
+
+**Examples:**
+```bash
+# Generate job sizes report (default .dat format)
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 job-sizes
+
+# Generate CPU job durations with custom output directory
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 --output-dir reports/ cpu-job-durations
+
+# Export GPU job sizes as JSON
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 --format json gpu-job-sizes
+
+# Export user CPU usage as markdown table
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 --format md pie-user-cpu
+
+# Generate memory-based job size analysis as CSV
+qhist-report resource --start-date 2025-11-01 --end-date 2025-11-30 --format csv memory-job-sizes
+```
+
 ## Requirements
 
 - Python 3.10+

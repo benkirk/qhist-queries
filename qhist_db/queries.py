@@ -7,13 +7,189 @@ database. It wraps SQLAlchemy queries with a convenient interface for:
 - Filtering by date ranges and status
 """
 
-from datetime import date, datetime
-from typing import Optional, List, Dict, Any
+from datetime import date, datetime, timedelta
+from typing import Optional, List, Dict, Any, Tuple
 
 from sqlalchemy import func, and_, or_
 from sqlalchemy.orm import Session
 
 from .models import Job, DailySummary, JobCharged
+
+
+from sqlalchemy import case
+
+
+class QueryConfig:
+    """Centralized configuration for query patterns and constants."""
+
+    # Machine-specific queue definitions
+    MACHINE_QUEUES = {
+        'derecho': {
+            'cpu': ['cpu', 'cpudev'],
+            'gpu': ['gpu', 'gpudev', 'pgpu']
+        },
+        'casper': {
+            'cpu': ['htc', 'gdex', 'largemem', 'vis', 'rda'],
+            'gpu': ['nvgpu', 'gpgpu', 'a100', 'h100', 'l40', 'amdgpu']
+        }
+    }
+
+    # Legacy attributes for backward compatibility (default to Derecho)
+    CPU_QUEUES = MACHINE_QUEUES['derecho']['cpu']
+    GPU_QUEUES = MACHINE_QUEUES['derecho']['gpu']
+
+    @staticmethod
+    def get_cpu_queues(machine: str) -> list:
+        """Get CPU queue names for a specific machine.
+
+        Args:
+            machine: Machine name ('casper' or 'derecho')
+
+        Returns:
+            List of CPU queue names for the machine
+        """
+        return QueryConfig.MACHINE_QUEUES.get(machine.lower(), {}).get('cpu', QueryConfig.CPU_QUEUES)
+
+    @staticmethod
+    def get_gpu_queues(machine: str) -> list:
+        """Get GPU queue names for a specific machine.
+
+        Args:
+            machine: Machine name ('casper' or 'derecho')
+
+        Returns:
+            List of GPU queue names for the machine
+        """
+        return QueryConfig.MACHINE_QUEUES.get(machine.lower(), {}).get('gpu', QueryConfig.GPU_QUEUES)
+
+    @staticmethod
+    def _make_ranges(boundaries: List[int]) -> List[Tuple[int, int]]:
+        """Generate range tuples from boundary list.
+
+        The first two boundaries create single-value ranges (e.g., (4,4), (8,8)),
+        then subsequent boundaries fill gaps (e.g., (9,16), (17,32)).
+
+        Args:
+            boundaries: List of boundary values (e.g., [4, 8, 16, 32, 64])
+
+        Returns:
+            List of (low, high) tuples
+
+        Examples:
+            >>> QueryConfig._make_ranges([4, 8, 16, 32])
+            [(4, 4), (8, 8), (9, 16), (17, 32)]
+            >>> QueryConfig._make_ranges([1, 2, 4, 8])
+            [(1, 1), (2, 2), (3, 4), (5, 8)]
+        """
+        if not boundaries:
+            return []
+
+        ranges = []
+
+        # First two boundaries are singleton ranges
+        for i in range(min(2, len(boundaries))):
+            ranges.append((boundaries[i], boundaries[i]))
+
+        # Remaining boundaries fill gaps
+        if len(boundaries) > 2:
+            prev = boundaries[1] + 1  # Start after second boundary
+            for bound in boundaries[2:]:
+                ranges.append((prev, bound))
+                prev = bound + 1
+
+        return ranges
+
+    # GPU resource ranges: 4, 8, 9-16, 17-32, 33-64, 65-96, 97-128, 129-256, 257-320
+    GPU_RANGES = _make_ranges([4, 8, 16, 32, 64, 96, 128, 256, 320])
+    GPU_OVERFLOW = ">320"
+
+    # Node resource ranges: 1, 2, 3-4, 5-8, ..., 1025-2048
+    NODE_RANGES = _make_ranges([1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048])
+    NODE_OVERFLOW = ">2048"
+
+    # Core resource ranges: 1, 2, 3-4, 5-8, ..., 97-128
+    CORE_RANGES = _make_ranges([1, 2, 4, 8, 16, 32, 48, 64, 96, 128])
+    CORE_OVERFLOW = ">128"
+
+    # Memory resource ranges (GB)
+    MEMORY_RANGES = [
+        (1, 10), (11, 50), (51, 100), (101, 500), (501, 1000)
+    ]
+    MEMORY_OVERFLOW = ">1000"
+
+    # Duration buckets (in seconds)
+    @staticmethod
+    def get_duration_buckets():
+        """Get duration bucket definitions.
+
+        Returns as a static method to avoid issues with Job reference at import time.
+        """
+        return {
+            "<30s": Job.elapsed < 30,
+            "30s-30m": and_(Job.elapsed >= 30, Job.elapsed < 1800),
+            "30-60m": and_(Job.elapsed >= 1800, Job.elapsed < 3600),
+            "1-5h": and_(Job.elapsed >= 3600, Job.elapsed < 18000),
+            "5-12h": and_(Job.elapsed >= 18000, Job.elapsed < 43200),
+            "12-18h": and_(Job.elapsed >= 43200, Job.elapsed < 64800),
+            ">18h": Job.elapsed >= 64800,
+        }
+
+    @staticmethod
+    def get_memory_per_rank_buckets():
+        """Get memory-per-rank bucket definitions (mixed MB/GB units).
+
+        Returns buckets for memory per rank histogram using Job.memory
+        (actual memory used) divided by (mpiprocs * ompthreads * numnodes).
+
+        Returns as a static method to avoid issues with Job reference at import time.
+        """
+        from .charging import BYTES_PER_GB
+        BYTES_PER_MB = 1024 * 1024
+
+        return {
+            "<128MB": Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (128 * BYTES_PER_MB),
+            "128MB-512MB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (128 * BYTES_PER_MB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (512 * BYTES_PER_MB)
+            ),
+            "512MB-1GB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (512 * BYTES_PER_MB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < BYTES_PER_GB
+            ),
+            "1-2GB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= BYTES_PER_GB,
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (2 * BYTES_PER_GB)
+            ),
+            "2-4GB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (2 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (4 * BYTES_PER_GB)
+            ),
+            "4-8GB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (4 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (8 * BYTES_PER_GB)
+            ),
+            "8-16GB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (8 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (16 * BYTES_PER_GB)
+            ),
+            "16-32GB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (16 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (32 * BYTES_PER_GB)
+            ),
+            "32-64GB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (32 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (64 * BYTES_PER_GB)
+            ),
+            "64-128GB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (64 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (128 * BYTES_PER_GB)
+            ),
+            "128-256GB": and_(
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (128 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (256 * BYTES_PER_GB)
+            ),
+            ">256GB": Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (256 * BYTES_PER_GB),
+        }
 
 
 class JobQueries:
@@ -29,13 +205,669 @@ class JobQueries:
         >>> jobs = queries.jobs_by_user("jdoe", start=date(2024, 1, 1))
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, machine: str = 'derecho'):
         """Initialize query interface.
 
         Args:
             session: SQLAlchemy session for database access
+            machine: Machine name ('casper' or 'derecho') for queue filtering
         """
         self.session = session
+        self.machine = machine.lower()
+
+    def _apply_date_filter(self, query, start: Optional[date], end: Optional[date]):
+        """Apply consistent date filtering to a query.
+
+        Filters on Job.end time using datetime.combine for proper time boundaries.
+
+        Args:
+            query: SQLAlchemy query object
+            start: Optional start date (inclusive)
+            end: Optional end date (inclusive)
+
+        Returns:
+            Filtered query
+        """
+        if start:
+            query = query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            query = query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+        return query
+
+    def _build_range_case(self, ranges: List[tuple], overflow_label: str, field):
+        """Build a CASE statement for resource range bucketing.
+
+        Args:
+            ranges: List of (low, high) tuples defining ranges
+            overflow_label: Label for values exceeding max range
+            field: SQLAlchemy column to apply ranges to (e.g., Job.numgpus)
+
+        Returns:
+            SQLAlchemy case statement with label "range_label"
+        """
+        return case(
+            *[
+                (and_(field >= low, field <= high),
+                 f"{low}-{high}" if low != high else str(low))
+                for low, high in ranges
+            ],
+            else_=overflow_label
+        ).label("range_label")
+
+    def _build_range_ordering(self, ranges: List[tuple], overflow_label: str, range_column):
+        """Build ordering expression for range-based results.
+
+        Ensures ranges appear in natural order (1, 2, 3-4, 5-8, ..., >max).
+
+        Args:
+            ranges: List of (low, high) tuples
+            overflow_label: Label for overflow range
+            range_column: Column containing range labels
+
+        Returns:
+            SQLAlchemy case ordering expression
+        """
+        order_cases = {
+            f"{low}-{high}" if low != high else str(low): i
+            for i, (low, high) in enumerate(ranges)
+        }
+        order_cases[overflow_label] = len(ranges)
+        return case(order_cases, value=range_column)
+
+    def usage_by_group(
+        self,
+        resource_type: str,
+        group_by: str,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get resource usage statistics grouped by user or account.
+
+        Generic factory method replacing pie chart queries.
+
+        Args:
+            resource_type: 'cpu' | 'gpu' | 'all' - type of resources to query
+            group_by: 'user' | 'account' - field to group by
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            List of dicts with keys: 'label', 'usage_hours', 'job_count'
+
+        Examples:
+            >>> # CPU usage by user (replaces pie_user_cpu)
+            >>> queries.usage_by_group('cpu', 'user', start_date, end_date)
+            >>> # GPU usage by account (replaces pie_group_gpu)
+            >>> queries.usage_by_group('gpu', 'account', start_date, end_date)
+        """
+        # Determine queues and hours field (machine-specific)
+        if resource_type == 'cpu':
+            queues = QueryConfig.get_cpu_queues(self.machine)
+            hours_field = JobCharged.cpu_hours
+        elif resource_type == 'gpu':
+            queues = QueryConfig.get_gpu_queues(self.machine)
+            hours_field = JobCharged.gpu_hours
+        else:  # 'all'
+            queues = QueryConfig.get_cpu_queues(self.machine) + QueryConfig.get_gpu_queues(self.machine)
+            # For 'all', sum both cpu_hours and gpu_hours
+            hours_field = func.coalesce(JobCharged.cpu_hours, 0) + func.coalesce(JobCharged.gpu_hours, 0)
+
+        # Determine group field
+        group_field = Job.user if group_by == 'user' else Job.account
+
+        # Build query
+        query = self.session.query(
+            group_field.label("label"),
+            func.sum(hours_field).label("usage_hours"),
+            func.count(Job.id).label("job_count")
+        ).join(JobCharged, Job.id == JobCharged.id).filter(Job.queue.in_(queues))
+
+        query = self._apply_date_filter(query, start, end)
+        results = query.group_by(group_field).order_by(func.sum(hours_field).desc()).all()
+
+        return [
+            {
+                "label": row[0],
+                "usage_hours": row[1] or 0.0,
+                "job_count": row[2] or 0,
+            }
+            for row in results
+        ]
+
+    def job_waits_by_resource(
+        self,
+        resource_type: str,
+        range_type: str,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get job wait statistics grouped by resource count ranges.
+
+        Generic factory method replacing wait time queries.
+
+        Args:
+            resource_type: 'cpu' | 'gpu' | 'all' - type of resources to filter
+            range_type: 'gpu' | 'node' | 'core' | 'memory' - resource to group by
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            List of dicts with keys: 'range_label', 'avg_wait_hours', 'job_count'
+
+        Examples:
+            >>> # GPU job waits (replaces gpu_job_waits_by_gpu_ranges)
+            >>> queries.job_waits_by_resource('gpu', 'gpu', start_date, end_date)
+            >>> # CPU job waits by node (replaces cpu_job_waits_by_node_ranges)
+            >>> queries.job_waits_by_resource('cpu', 'node', start_date, end_date)
+        """
+        # Determine queues (machine-specific)
+        if resource_type == 'cpu':
+            queues = QueryConfig.get_cpu_queues(self.machine)
+        elif resource_type == 'gpu':
+            queues = QueryConfig.get_gpu_queues(self.machine)
+        else:  # 'all'
+            queues = QueryConfig.get_cpu_queues(self.machine) + QueryConfig.get_gpu_queues(self.machine)
+
+        # Determine ranges and field
+        if range_type == 'gpu':
+            ranges = QueryConfig.GPU_RANGES
+            overflow = QueryConfig.GPU_OVERFLOW
+            field = Job.numgpus
+        elif range_type == 'node':
+            ranges = QueryConfig.NODE_RANGES
+            overflow = QueryConfig.NODE_OVERFLOW
+            field = Job.numnodes
+        elif range_type == 'core':
+            ranges = QueryConfig.CORE_RANGES
+            overflow = QueryConfig.CORE_OVERFLOW
+            field = Job.numcpus
+        else:  # 'memory'
+            ranges = QueryConfig.MEMORY_RANGES
+            overflow = QueryConfig.MEMORY_OVERFLOW
+            # Convert bytes to GB for memory ranges
+            field = Job.reqmem / (1024**3)
+
+        # Build range case and wait time calculation
+        range_case = self._build_range_case(ranges, overflow, field)
+        wait_time_hours = (func.julianday(Job.start) - func.julianday(Job.eligible)) * 24
+
+        # Build subquery
+        subquery = self.session.query(
+            Job.id,
+            range_case,
+            wait_time_hours.label("wait_hours")
+        ).filter(Job.queue.in_(queues))
+
+        subquery = self._apply_date_filter(subquery, start, end)
+        subquery = subquery.subquery()
+
+        # Aggregate by range
+        query = self.session.query(
+            subquery.c.range_label,
+            func.avg(subquery.c.wait_hours).label("avg_wait_hours"),
+            func.count(subquery.c.id).label("job_count")
+        ).group_by(subquery.c.range_label)
+
+        # Apply custom ordering
+        order_expr = self._build_range_ordering(ranges, overflow, subquery.c.range_label)
+        results = query.order_by(order_expr).all()
+
+        return [
+            {
+                "range_label": row[0],
+                "avg_wait_hours": row[1] or 0.0,
+                "job_count": row[2],
+            }
+            for row in results
+        ]
+
+    def job_sizes_by_resource(
+        self,
+        resource_type: str,
+        range_type: str,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get job size statistics grouped by resource count ranges.
+
+        Generic factory method replacing job size queries.
+
+        Args:
+            resource_type: 'cpu' | 'gpu' | 'all' - type of resources to filter
+            range_type: 'gpu' | 'node' | 'core' | 'memory' - resource to group by
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            List of dicts with keys: 'range_label', 'job_count', 'user_count', 'hours'
+
+        Examples:
+            >>> # GPU job sizes (replaces gpu_job_sizes_by_gpu_ranges)
+            >>> queries.job_sizes_by_resource('gpu', 'gpu', start_date, end_date)
+            >>> # CPU job sizes by node (replaces cpu_job_sizes_by_node_ranges)
+            >>> queries.job_sizes_by_resource('cpu', 'node', start_date, end_date)
+        """
+        # Determine queues and hours field (machine-specific)
+        if resource_type == 'cpu':
+            queues = QueryConfig.get_cpu_queues(self.machine)
+            hours_field = JobCharged.cpu_hours
+        elif resource_type == 'gpu':
+            queues = QueryConfig.get_gpu_queues(self.machine)
+            hours_field = JobCharged.gpu_hours
+        else:  # 'all'
+            queues = QueryConfig.get_cpu_queues(self.machine) + QueryConfig.get_gpu_queues(self.machine)
+            hours_field = func.coalesce(JobCharged.cpu_hours, 0) + func.coalesce(JobCharged.gpu_hours, 0)
+
+        # Determine ranges and field
+        if range_type == 'gpu':
+            ranges = QueryConfig.GPU_RANGES
+            overflow = QueryConfig.GPU_OVERFLOW
+            field = Job.numgpus
+        elif range_type == 'node':
+            ranges = QueryConfig.NODE_RANGES
+            overflow = QueryConfig.NODE_OVERFLOW
+            field = Job.numnodes
+        elif range_type == 'core':
+            ranges = QueryConfig.CORE_RANGES
+            overflow = QueryConfig.CORE_OVERFLOW
+            field = Job.numcpus
+        else:  # 'memory'
+            ranges = QueryConfig.MEMORY_RANGES
+            overflow = QueryConfig.MEMORY_OVERFLOW
+            field = Job.reqmem / (1024**3)
+
+        # Build range case
+        range_case = self._build_range_case(ranges, overflow, field)
+
+        # Build subquery
+        subquery = self.session.query(
+            Job.id,
+            Job.user,
+            hours_field.label("hours_field"),
+            range_case
+        ).join(JobCharged, Job.id == JobCharged.id).filter(Job.queue.in_(queues))
+
+        subquery = self._apply_date_filter(subquery, start, end)
+        subquery = subquery.subquery()
+
+        # Aggregate by range
+        query = self.session.query(
+            subquery.c.range_label,
+            func.count(subquery.c.id).label("job_count"),
+            func.count(func.distinct(subquery.c.user)).label("user_count"),
+            func.sum(subquery.c.hours_field).label("hours")
+        ).group_by(subquery.c.range_label)
+
+        # Apply custom ordering
+        order_expr = self._build_range_ordering(ranges, overflow, subquery.c.range_label)
+        results = query.order_by(order_expr).all()
+
+        return [
+            {
+                "range_label": row[0],
+                "job_count": row[1],
+                "user_count": row[2],
+                "hours": row[3] or 0.0,
+            }
+            for row in results
+        ]
+
+    def job_durations(
+        self,
+        resource_type: str,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get job duration statistics by period.
+
+        Generic factory method replacing duration queries.
+
+        Args:
+            resource_type: 'cpu' | 'gpu' | 'all' - type of resources to filter
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day' or 'month')
+
+        Returns:
+            List of dicts with keys: 'date', '<30s', '30s-30m', '30-60m', '1-5h', '5-12h', '12-18h', '>18h'
+
+        Examples:
+            >>> # GPU job durations by day
+            >>> queries.job_durations('gpu', start_date, end_date)
+            >>> # CPU job durations by month
+            >>> queries.job_durations('cpu', start_date, end_date, period='month')
+        """
+        from .query_builders import ResourceTypeResolver, PeriodGrouper
+
+        # Resolve resource type to queues and hours field (machine-specific)
+        queues, hours_field = ResourceTypeResolver.resolve(resource_type, self.machine, JobCharged)
+
+        # Get duration buckets
+        duration_buckets = QueryConfig.get_duration_buckets()
+
+        # Get period grouping function
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
+
+        # Build query
+        query = self.session.query(
+            period_func.label("job_date"),
+            *[
+                func.sum(case((bucket, hours_field), else_=0)).label(label)
+                for label, bucket in duration_buckets.items()
+            ]
+        ).join(JobCharged, Job.id == JobCharged.id).filter(Job.queue.in_(queues))
+
+        query = self._apply_date_filter(query, start, end)
+        results = query.group_by("job_date").order_by("job_date").all()
+
+        return [
+            {
+                "date": row[0],
+                **{label: row[i+1] or 0.0 for i, label in enumerate(duration_buckets.keys())}
+            }
+            for row in results
+        ]
+
+    def job_memory_per_rank(
+        self,
+        resource_type: str,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get job memory-per-rank histogram by period.
+
+        Calculates memory per rank as memory_bytes / (mpiprocs * ompthreads * numnodes).
+        Filters out jobs where mpiprocs, ompthreads, numnodes, or memory is 0 or NULL.
+
+        Args:
+            resource_type: 'cpu' | 'gpu' - type of resources to filter
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day' or 'month')
+
+        Returns:
+            List of dicts with date + histogram bucket columns
+
+        Examples:
+            >>> # CPU job memory-per-rank by day
+            >>> queries.job_memory_per_rank('cpu', start_date, end_date)
+            >>> # GPU job memory-per-rank by month
+            >>> queries.job_memory_per_rank('gpu', start_date, end_date, period='month')
+        """
+        from .query_builders import ResourceTypeResolver, PeriodGrouper
+
+        # Resolve resource type to queues and hours field (machine-specific)
+        queues, hours_field = ResourceTypeResolver.resolve(resource_type, self.machine, JobCharged)
+
+        # Get memory-per-rank buckets
+        memory_buckets = QueryConfig.get_memory_per_rank_buckets()
+
+        # Get period grouping function
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
+
+        # Build query with CASE statements for each bucket
+        query = self.session.query(
+            period_func.label("job_date"),
+            *[
+                func.sum(case((bucket, hours_field), else_=0)).label(label)
+                for label, bucket in memory_buckets.items()
+            ]
+        ).join(JobCharged, Job.id == JobCharged.id).filter(
+            Job.queue.in_(queues),
+            Job.mpiprocs.isnot(None),   # Filter NULL
+            Job.mpiprocs > 0,           # Filter zero (prevents division by zero)
+            Job.ompthreads.isnot(None), # Filter NULL
+            Job.ompthreads > 0,         # Filter zero (prevents division by zero)
+            Job.numnodes.isnot(None),   # Filter NULL
+            Job.numnodes > 0,           # Filter zero (prevents division by zero)
+            Job.memory.isnot(None)      # Filter NULL memory
+        )
+
+        query = self._apply_date_filter(query, start, end)
+        results = query.group_by("job_date").order_by("job_date").all()
+
+        return [
+            {
+                "date": row[0],
+                **{label: row[i+1] or 0.0 for i, label in enumerate(memory_buckets.keys())}
+            }
+            for row in results
+        ]
+
+    def memory_job_waits(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get job wait statistics grouped by memory requirement ranges.
+
+        Convenience method wrapping job_waits_by_resource with memory range type.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            List of dicts with keys: 'range_label', 'avg_wait_hours', 'job_count'
+
+        Examples:
+            >>> queries.memory_job_waits(start_date, end_date)
+        """
+        return self.job_waits_by_resource(
+            resource_type='all',
+            range_type='memory',
+            start=start,
+            end=end
+        )
+
+    def memory_job_sizes(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get job size statistics grouped by memory requirement ranges.
+
+        Convenience method wrapping job_sizes_by_resource with memory range type.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+
+        Returns:
+            List of dicts with keys: 'range_label', 'job_count', 'user_count', 'hours'
+
+        Examples:
+            >>> queries.memory_job_sizes(start_date, end_date)
+        """
+        return self.job_sizes_by_resource(
+            resource_type='all',
+            range_type='memory',
+            start=start,
+            end=end
+        )
+
+    def _build_date_filter(self, start: Optional[date], end: Optional[date]) -> List:
+        """Build date filter conditions for usage_history queries.
+
+        Args:
+            start: Optional start date (inclusive)
+            end: Optional end date (inclusive)
+
+        Returns:
+            List of SQLAlchemy filter conditions
+        """
+        date_filter = []
+        if start:
+            date_filter.append(Job.end >= datetime.combine(start, datetime.min.time()))
+        if end:
+            date_filter.append(Job.end <= datetime.combine(end, datetime.max.time()))
+        return date_filter
+
+    def _usage_history_total_users(self, period_format: str, date_filter: List):
+        """Build subquery for total unique users per period.
+
+        Args:
+            period_format: strftime format string for period grouping
+            date_filter: List of filter conditions
+
+        Returns:
+            SQLAlchemy subquery for total users
+        """
+        return self.session.query(
+            func.strftime(period_format, Job.end).label("period"),
+            func.count(func.distinct(Job.user)).label("total_users")
+        ).filter(*date_filter).group_by("period").subquery()
+
+    def _usage_history_total_projects(self, period_format: str, date_filter: List):
+        """Build subquery for total unique projects per period.
+
+        Args:
+            period_format: strftime format string for period grouping
+            date_filter: List of filter conditions
+
+        Returns:
+            SQLAlchemy subquery for total projects
+        """
+        return self.session.query(
+            func.strftime(period_format, Job.end).label("period"),
+            func.count(func.distinct(Job.account)).label("total_projects")
+        ).filter(*date_filter).group_by("period").subquery()
+
+    def _usage_history_resource_stats(
+        self, resource_type: str, period_format: str, date_filter: List
+    ):
+        """Build subquery for CPU or GPU stats per period.
+
+        Args:
+            resource_type: 'cpu' or 'gpu'
+            period_format: strftime format string for period grouping
+            date_filter: List of filter conditions
+
+        Returns:
+            SQLAlchemy subquery for resource stats (users, projects, jobs, hours)
+        """
+        from .query_builders import ResourceTypeResolver
+
+        queues, hours_field = ResourceTypeResolver.resolve(
+            resource_type, self.machine, JobCharged
+        )
+
+        prefix = resource_type.lower()
+
+        return self.session.query(
+            func.strftime(period_format, Job.end).label("period"),
+            func.count(func.distinct(Job.user)).label(f"{prefix}_users"),
+            func.count(func.distinct(Job.account)).label(f"{prefix}_projects"),
+            func.count(Job.id).label(f"{prefix}_jobs"),
+            func.sum(hours_field).label(f"{prefix}_hours")
+        ).join(
+            JobCharged, Job.id == JobCharged.id
+        ).filter(
+            Job.queue.in_(queues), *date_filter
+        ).group_by("period").subquery()
+
+    def _join_usage_history_results(self, users_sq, projects_sq, cpu_sq, gpu_sq):
+        """Join subqueries and format usage history results.
+
+        Args:
+            users_sq: Total users subquery
+            projects_sq: Total projects subquery
+            cpu_sq: CPU stats subquery
+            gpu_sq: GPU stats subquery
+
+        Returns:
+            List of formatted result dictionaries with usage history data
+        """
+        query = self.session.query(
+            users_sq.c.period,
+            users_sq.c.total_users,
+            projects_sq.c.total_projects,
+            cpu_sq.c.cpu_users,
+            cpu_sq.c.cpu_projects,
+            cpu_sq.c.cpu_jobs,
+            cpu_sq.c.cpu_hours,
+            gpu_sq.c.gpu_users,
+            gpu_sq.c.gpu_projects,
+            gpu_sq.c.gpu_jobs,
+            gpu_sq.c.gpu_hours
+        ).join(
+            projects_sq, users_sq.c.period == projects_sq.c.period
+        ).outerjoin(
+            cpu_sq, users_sq.c.period == cpu_sq.c.period
+        ).outerjoin(
+            gpu_sq, users_sq.c.period == gpu_sq.c.period
+        ).order_by(users_sq.c.period)
+
+        results = query.all()
+
+        return [
+            {
+                "Date": row[0],
+                "#-Users": row[1] or 0,
+                "#-Proj": row[2] or 0,
+                "#-CPU-Users": row[3] or 0,
+                "#-CPU-Proj": row[4] or 0,
+                "#-CPU-Jobs": row[5] or 0,
+                "#-CPU-Hrs": row[6] or 0.0,
+                "#-GPU-Users": row[7] or 0,
+                "#-GPU-Proj": row[8] or 0,
+                "#-GPU-Jobs": row[9] or 0,
+                "#-GPU-Hrs": row[10] or 0.0,
+            }
+            for row in results
+        ]
+
+    def usage_history(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get usage history by time period.
+
+        This method coordinates 4 subqueries to gather comprehensive usage
+        statistics per period (day or month):
+        1. Total unique users across all queues
+        2. Total unique projects across all queues
+        3. CPU queue statistics (users, projects, jobs, hours)
+        4. GPU queue statistics (users, projects, jobs, hours)
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day' or 'month')
+
+        Returns:
+            List of dicts with usage history statistics for each period.
+            Each dict contains: Date, #-Users, #-Proj, #-CPU-Users, #-CPU-Proj,
+            #-CPU-Jobs, #-CPU-Hrs, #-GPU-Users, #-GPU-Proj, #-GPU-Jobs, #-GPU-Hrs
+
+        Raises:
+            ValueError: If period is not 'day' or 'month'
+        """
+        # Determine period format string
+        if period == "day":
+            period_format = "%Y-%m-%d"
+        elif period == "month":
+            period_format = "%Y-%m"
+        else:
+            raise ValueError("Invalid period specified. Must be 'day' or 'month'.")
+
+        # Build date filter once
+        date_filter = self._build_date_filter(start, end)
+
+        # Build 4 subqueries
+        total_users_sq = self._usage_history_total_users(period_format, date_filter)
+        total_projects_sq = self._usage_history_total_projects(period_format, date_filter)
+        cpu_stats_sq = self._usage_history_resource_stats('cpu', period_format, date_filter)
+        gpu_stats_sq = self._usage_history_resource_stats('gpu', period_format, date_filter)
+
+        # Join and format results
+        return self._join_usage_history_results(
+            total_users_sq, total_projects_sq, cpu_stats_sq, gpu_stats_sq
+        )
 
     def jobs_by_user(
         self,
@@ -303,6 +1135,144 @@ class JobQueries:
 
         return query.order_by(DailySummary.date).all()
 
+    def jobs_per_user_account_by_period(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get the number of jobs per user per account by period in a date range.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day', 'month', 'quarter')
+
+        Returns:
+            A list of dicts with 'period', 'user', 'account', and 'job_count' keys.
+        """
+        from .query_builders import PeriodGrouper
+
+        # Get period function (returns monthly for quarter, which will be aggregated later)
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
+
+        query = self.session.query(
+            period_func.label("period"),
+            Job.user,
+            Job.account,
+            func.count(Job.id).label("job_count")
+        )
+
+        query = self._apply_date_filter(query, start, end)
+
+        results = query.group_by("period", Job.user, Job.account).order_by("period", Job.user, Job.account).all()
+
+        # Convert results to list of dicts
+        monthly_data = [
+            {"period": row[0], "user": row[1], "account": row[2], "job_count": row[3]}
+            for row in results
+        ]
+
+        # If quarter period, aggregate monthly data to quarterly
+        if period == "quarter":
+            return PeriodGrouper.aggregate_quarters(
+                monthly_data, 'job_count', grouping_fields=['user', 'account']
+            )
+
+        return monthly_data
+
+    def unique_projects_by_period(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get the number of unique projects by period in a date range.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day', 'month', 'quarter')
+
+        Returns:
+            A list of dicts with 'period' and 'project_count' keys.
+        """
+        from .query_builders import PeriodGrouper
+
+        if period == "quarter":
+            # For quarters, get monthly distinct project data and aggregate
+            monthly_query = self.session.query(
+                func.strftime("%Y-%m", Job.end).label("month"),
+                Job.account
+            ).distinct()
+
+            monthly_query = self._apply_date_filter(monthly_query, start, end)
+
+            monthly_results = monthly_query.all()
+
+            # Use PeriodGrouper to aggregate quarters from monthly distinct data
+            return PeriodGrouper.aggregate_quarters_distinct(monthly_results, 'project_count')
+
+        # For day or month periods
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
+
+        query = self.session.query(
+            period_func.label("period"),
+            func.count(func.distinct(Job.account)).label("project_count")
+        )
+
+        query = self._apply_date_filter(query, start, end)
+
+        results = query.group_by("period").order_by("period").all()
+
+        return [{"period": row[0], "project_count": row[1]} for row in results]
+
+    def unique_users_by_period(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get the number of unique users by period in a date range.
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day', 'month', 'quarter')
+
+        Returns:
+            A list of dicts with 'period' and 'user_count' keys.
+        """
+        from .query_builders import PeriodGrouper
+
+        if period == "quarter":
+            # For quarters, get monthly distinct user data and aggregate
+            monthly_query = self.session.query(
+                func.strftime("%Y-%m", Job.end).label("month"),
+                Job.user
+            ).distinct()
+
+            monthly_query = self._apply_date_filter(monthly_query, start, end)
+
+            monthly_results = monthly_query.all()
+
+            # Use PeriodGrouper to aggregate quarters from monthly distinct data
+            return PeriodGrouper.aggregate_quarters_distinct(monthly_results, 'user_count')
+
+        # For day or month periods
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
+
+        query = self.session.query(
+            period_func.label("period"),
+            func.count(func.distinct(Job.user)).label("user_count")
+        )
+
+        query = self._apply_date_filter(query, start, end)
+
+        results = query.group_by("period").order_by("period").all()
+
+        return [{"period": row[0], "user_count": row[1]} for row in results]
+
     def top_users_by_jobs(
         self,
         start: date,
@@ -379,6 +1349,58 @@ class JobQueries:
             }
             for queue, count, elapsed, avg in result
         ]
+
+    @classmethod
+    def multi_machine_query(
+        cls,
+        machines: List[str],
+        method_name: str,
+        **kwargs
+    ) -> List[Dict[str, Any]]:
+        """Execute a query across multiple machines and aggregate results.
+
+        This class method allows running the same query against multiple machine
+        databases (casper, derecho) and combining the results with machine labels.
+
+        Args:
+            machines: List of machine names to query (e.g., ['casper', 'derecho'])
+            method_name: Name of the JobQueries method to call
+            **kwargs: Additional keyword arguments to pass to the query method
+
+        Returns:
+            List of result dictionaries, each tagged with a 'machine' field
+
+        Example:
+            >>> results = JobQueries.multi_machine_query(
+            ...     machines=['casper', 'derecho'],
+            ...     method_name='usage_by_group',
+            ...     resource_type='cpu',
+            ...     group_by='user',
+            ...     start=date(2025, 11, 1),
+            ...     end=date(2025, 11, 30)
+            ... )
+            >>> # Results contain data from both machines with 'machine' field
+        """
+        from .database import get_session
+
+        all_results = []
+
+        for machine in machines:
+            session = get_session(machine)
+            try:
+                queries = cls(session, machine=machine)
+                method = getattr(queries, method_name)
+                results = method(**kwargs)
+
+                # Tag each result with the machine name
+                for row in results:
+                    row['machine'] = machine
+
+                all_results.extend(results)
+            finally:
+                session.close()
+
+        return all_results
 
 
 if __name__ == "__main__":

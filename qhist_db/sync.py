@@ -43,9 +43,9 @@ def sync_jobs(
     Args:
         session: SQLAlchemy session
         machine: Machine name ('casper' or 'derecho')
-        period: Single date in YYYYMMDD format
-        start_date: Start date for range (YYYYMMDD)
-        end_date: End date for range (YYYYMMDD)
+        period: Single date in YYYY-MM-DD format
+        start_date: Start date for range (YYYY-MM-DD)
+        end_date: End date for range (YYYY-MM-DD)
         dry_run: If True, don't actually insert records
 
     Returns:
@@ -110,9 +110,9 @@ def sync_jobs_bulk(
     Args:
         session: SQLAlchemy session
         machine: Machine name ('casper' or 'derecho')
-        period: Single date in YYYYMMDD format
-        start_date: Start date for range (YYYYMMDD)
-        end_date: End date for range (YYYYMMDD)
+        period: Single date in YYYY-MM-DD format
+        start_date: Start date for range (YYYY-MM-DD)
+        end_date: End date for range (YYYY-MM-DD)
         dry_run: If True, don't actually insert records
         batch_size: Number of records to insert per batch
         verbose: If True, print progress for each day
@@ -140,7 +140,7 @@ def sync_jobs_bulk(
     if start_date and end_date:
         days = date_range(start_date, end_date)
         ndays = date_range_length(start_date, end_date)
-        iterator = track(days, total=ndays, description="Processing...") if track and verbose else dates
+        iterator = track(days, total=ndays, description="Processing...") if track and verbose else days
         for day in iterator:
             day_date = parse_date_string(day).date()
 
@@ -211,7 +211,7 @@ def _sync_single_day(
     Args:
         session: SQLAlchemy session
         machine: Machine name
-        period: Date in YYYYMMDD format
+        period: Date in YYYY-MM-DD format
         dry_run: If True, don't insert
         batch_size: Batch size for inserts
         verbose: If True, print warnings
@@ -259,9 +259,12 @@ def _sync_single_day(
             # Extract just the warning message if present
             error_str = str(e)
             if "missing records" in error_str.lower():
-                print("SKIPPED (missing accounting data)")
+                print(f"  Skipping {period}... (missing accounting data)")
+            elif "Failed to parse qhist JSON output" in error_str:
+                # JSON parse errors usually indicate missing/corrupted accounting data
+                print(f"  Skipping {period}... (malformed accounting data)")
             else:
-                print(f"FAILED: {error_str[:100]}")
+                print(f"  Failed to sync {period}: {error_str[:80]}")
 
     return stats
 

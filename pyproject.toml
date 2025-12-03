@@ -14,8 +14,18 @@ dev = [
     "pytest-cov",
 ]
 
+analysis = [
+         "qhist-db[dev]",
+         "jupyterlab",
+         "numpy",
+         "matplotlib",
+         "pyyaml",
+         "pandas",
+]
+
 [project.scripts]
 qhist-sync = "scripts.sync_jobs:main"
+qhist-report = "qhist_db.cli:cli"
 
 [build-system]
 requires = ["setuptools>=61.0"]

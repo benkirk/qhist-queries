@@ -16,6 +16,8 @@ build/
 venv/
 .venv/
 ENV/
+conda-env/
+samples/
 
 # IDE
 .idea/
@@ -26,3 +28,4 @@ ENV/
 # OS
 .DS_Store
 *~
+.ipynb_checkpoints/

@@ -7,7 +7,6 @@ dependencies:
   - pip
   - sqlite
   - sqlite-utils
-  - tqdm
   - tzdata
   - pip:
       - pipdeptree

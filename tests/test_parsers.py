@@ -201,17 +201,14 @@ class TestParseDateString:
     """Tests for parse_date_string function."""
 
     def test_valid_date(self):
-        """Valid YYYYMMDD should parse correctly."""
-        result = parse_date_string("20250115")
+        """Valid YYYY-MM-DD should parse correctly."""
+        result = parse_date_string("2025-01-15")
         assert result.year == 2025
         assert result.month == 1
         assert result.day == 15
 
     def test_invalid_date(self):
         """Invalid format should raise ValueError."""
-        with pytest.raises(ValueError):
-            parse_date_string("2025-01-15")
-
         with pytest.raises(ValueError):
             parse_date_string("not-a-date")
 
@@ -221,24 +218,24 @@ class TestDateRange:
 
     def test_single_day(self):
         """Same start and end should yield one date."""
-        result = list(date_range("20250115", "20250115"))
-        assert result == ["20250115"]
+        result = list(date_range("2025-01-15", "2025-01-15"))
+        assert result == ["2025-01-15"]
 
     def test_multiple_days(self):
         """Should yield all dates inclusive."""
-        result = list(date_range("20250115", "20250117"))
-        assert result == ["20250115", "20250116", "20250117"]
+        result = list(date_range("2025-01-15", "2025-01-17"))
+        assert result == ["2025-01-15", "2025-01-16", "2025-01-17"]
 
     def test_month_boundary(self):
         """Should handle month boundaries correctly."""
-        result = list(date_range("20250130", "20250202"))
+        result = list(date_range("2025-01-30", "2025-02-02"))
         assert len(result) == 4
-        assert result[0] == "20250130"
-        assert result[-1] == "20250202"
+        assert result[0] == "2025-01-30"
+        assert result[-1] == "2025-02-02"
 
     def test_year_boundary(self):
         """Should handle year boundaries correctly."""
-        result = list(date_range("20241230", "20250102"))
+        result = list(date_range("2024-12-30", "2025-01-02"))
         assert len(result) == 4
-        assert "20241231" in result
-        assert "20250101" in result
+        assert "2024-12-31" in result
+        assert "2025-01-01" in result
