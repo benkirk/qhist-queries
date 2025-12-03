@@ -33,20 +33,24 @@ def run_qhist_command(
         RuntimeError: If SSH command fails
         subprocess.TimeoutExpired: If command exceeds timeout
     """
+    # Helper to convert YYYY-MM-DD to YYYYMMDD (qhist format)
+    def to_qhist_date(date_str: str) -> str:
+        return date_str.replace("-", "")
+
     # Build the qhist command
-    # qhist uses -p/--period with format: YYYY-MM-DD for single day, YYYY-MM-DD-YYYY-MM-DD for range
+    # qhist uses -p/--period with format: YYYYMMDD for single day, YYYYMMDD-YYYYMMDD for range
     cmd = ["ssh", machine, "qhist", "-J", f"-f={ALL_FIELDS}"]
 
     if period:
-        cmd.extend(["-p", period])
+        cmd.extend(["-p", to_qhist_date(period)])
     elif start_date and end_date:
-        cmd.extend(["-p", f"{start_date}-{end_date}"])
+        cmd.extend(["-p", f"{to_qhist_date(start_date)}-{to_qhist_date(end_date)}"])
     elif start_date:
         # From start_date to today
-        cmd.extend(["-p", f"{start_date}-"])
+        cmd.extend(["-p", f"{to_qhist_date(start_date)}-"])
     elif end_date:
         # Up to end_date (use days parameter instead)
-        cmd.extend(["-p", end_date])
+        cmd.extend(["-p", to_qhist_date(end_date)])
 
     # Run the command with timeout
     result = subprocess.run(
