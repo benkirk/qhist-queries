@@ -111,7 +111,7 @@ class QueryConfig:
         """Get memory-per-rank bucket definitions (mixed MB/GB units).
 
         Returns buckets for memory per rank histogram using Job.memory
-        (actual memory used) divided by (mpiprocs * numnodes).
+        (actual memory used) divided by (mpiprocs * ompthreads * numnodes).
 
         Returns as a static method to avoid issues with Job reference at import time.
         """
@@ -119,48 +119,48 @@ class QueryConfig:
         BYTES_PER_MB = 1024 * 1024
 
         return {
-            "<128MB": Job.memory / (Job.mpiprocs * Job.numnodes) < (128 * BYTES_PER_MB),
+            "<128MB": Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (128 * BYTES_PER_MB),
             "128MB-512MB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= (128 * BYTES_PER_MB),
-                Job.memory / (Job.mpiprocs * Job.numnodes) < (512 * BYTES_PER_MB)
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (128 * BYTES_PER_MB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (512 * BYTES_PER_MB)
             ),
             "512MB-1GB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= (512 * BYTES_PER_MB),
-                Job.memory / (Job.mpiprocs * Job.numnodes) < BYTES_PER_GB
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (512 * BYTES_PER_MB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < BYTES_PER_GB
             ),
             "1-2GB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= BYTES_PER_GB,
-                Job.memory / (Job.mpiprocs * Job.numnodes) < (2 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= BYTES_PER_GB,
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (2 * BYTES_PER_GB)
             ),
             "2-4GB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= (2 * BYTES_PER_GB),
-                Job.memory / (Job.mpiprocs * Job.numnodes) < (4 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (2 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (4 * BYTES_PER_GB)
             ),
             "4-8GB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= (4 * BYTES_PER_GB),
-                Job.memory / (Job.mpiprocs * Job.numnodes) < (8 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (4 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (8 * BYTES_PER_GB)
             ),
             "8-16GB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= (8 * BYTES_PER_GB),
-                Job.memory / (Job.mpiprocs * Job.numnodes) < (16 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (8 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (16 * BYTES_PER_GB)
             ),
             "16-32GB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= (16 * BYTES_PER_GB),
-                Job.memory / (Job.mpiprocs * Job.numnodes) < (32 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (16 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (32 * BYTES_PER_GB)
             ),
             "32-64GB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= (32 * BYTES_PER_GB),
-                Job.memory / (Job.mpiprocs * Job.numnodes) < (64 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (32 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (64 * BYTES_PER_GB)
             ),
             "64-128GB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= (64 * BYTES_PER_GB),
-                Job.memory / (Job.mpiprocs * Job.numnodes) < (128 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (64 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (128 * BYTES_PER_GB)
             ),
             "128-256GB": and_(
-                Job.memory / (Job.mpiprocs * Job.numnodes) >= (128 * BYTES_PER_GB),
-                Job.memory / (Job.mpiprocs * Job.numnodes) < (256 * BYTES_PER_GB)
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (128 * BYTES_PER_GB),
+                Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) < (256 * BYTES_PER_GB)
             ),
-            ">256GB": Job.memory / (Job.mpiprocs * Job.numnodes) >= (256 * BYTES_PER_GB),
+            ">256GB": Job.memory / (Job.mpiprocs * Job.ompthreads * Job.numnodes) >= (256 * BYTES_PER_GB),
         }
 
 
@@ -610,10 +610,11 @@ class JobQueries:
         ).join(JobCharged, Job.id == JobCharged.id).filter(
             Job.queue.in_(queues),
             Job.mpiprocs.isnot(None),  # Filter NULL
-            Job.mpiprocs > 0,           # Filter zero (prevents division by zero)
-            Job.numnodes.isnot(None),   # Filter NULL
-            Job.numnodes > 0,            # Filter zero (prevents division by zero)
-            Job.memory.isnot(None)      # Filter NULL memory
+            Job.mpiprocs > 0,          # Filter zero (prevents division by zero)
+            Job.ompthreads > 0,        # Filter zero (prevents division by zero)
+            Job.numnodes.isnot(None),  # Filter NULL
+            Job.numnodes > 0,          # Filter zero (prevents division by zero)
+            Job.memory.isnot(None)     # Filter NULL memory
         )
 
         query = self._apply_date_filter(query, start, end)
@@ -1096,7 +1097,7 @@ class JobQueries:
                 year, month = row.period.split('-')
                 quarter = (int(month) - 1) // 3 + 1
                 q_key = f"{year}-Q{quarter}"
-                
+
                 agg_key = (q_key, row.user, row.account)
                 quarterly_counts[agg_key] = quarterly_counts.get(agg_key, 0) + row.job_count
 
@@ -1134,7 +1135,7 @@ class JobQueries:
                 monthly_query = monthly_query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
 
             monthly_results = monthly_query.all()
-            
+
             quarterly_projects = {} # key: "YYYY-Q", value: set of projects
             for month_str, project in monthly_results:
                 if not project or not month_str:
@@ -1145,7 +1146,7 @@ class JobQueries:
                 if q_key not in quarterly_projects:
                     quarterly_projects[q_key] = set()
                 quarterly_projects[q_key].add(project)
-            
+
             results = [{"period": key, "project_count": len(projects)} for key, projects in quarterly_projects.items()]
             return sorted(results, key=lambda x: x['period'])
 
@@ -1199,7 +1200,7 @@ class JobQueries:
                 monthly_query = monthly_query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
 
             monthly_results = monthly_query.all()
-            
+
             quarterly_users = {} # key: "YYYY-Q", value: set of users
             for month_str, user in monthly_results:
                 if not user or not month_str:
@@ -1210,7 +1211,7 @@ class JobQueries:
                 if q_key not in quarterly_users:
                     quarterly_users[q_key] = set()
                 quarterly_users[q_key].add(user)
-            
+
             results = [{"period": key, "user_count": len(users)} for key, users in quarterly_users.items()]
             return sorted(results, key=lambda x: x['period'])
 

@@ -6,9 +6,11 @@ subcommands=(
   cpu-job-sizes
   cpu-job-waits
   cpu-job-durations
+  cpu-job-memory-per-rank
   gpu-job-sizes
   gpu-job-waits
   gpu-job-durations
+  gpu-job-memory-per-rank
   pie-user-cpu
   pie-user-gpu
   pie-proj-cpu
