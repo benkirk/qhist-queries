@@ -8,7 +8,7 @@ database. It wraps SQLAlchemy queries with a convenient interface for:
 """
 
 from datetime import date, datetime, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 from sqlalchemy import func, and_, or_
 from sqlalchemy.orm import Session
@@ -62,25 +62,53 @@ class QueryConfig:
         """
         return QueryConfig.MACHINE_QUEUES.get(machine.lower(), {}).get('gpu', QueryConfig.GPU_QUEUES)
 
-    # GPU resource ranges
-    GPU_RANGES = [
-        (4, 4), (8, 8), (9, 16), (17, 32), (33, 64), (65, 96),
-        (97, 128), (129, 256), (257, 320)
-    ]
+    @staticmethod
+    def _make_ranges(boundaries: List[int]) -> List[Tuple[int, int]]:
+        """Generate range tuples from boundary list.
+
+        The first two boundaries create single-value ranges (e.g., (4,4), (8,8)),
+        then subsequent boundaries fill gaps (e.g., (9,16), (17,32)).
+
+        Args:
+            boundaries: List of boundary values (e.g., [4, 8, 16, 32, 64])
+
+        Returns:
+            List of (low, high) tuples
+
+        Examples:
+            >>> QueryConfig._make_ranges([4, 8, 16, 32])
+            [(4, 4), (8, 8), (9, 16), (17, 32)]
+            >>> QueryConfig._make_ranges([1, 2, 4, 8])
+            [(1, 1), (2, 2), (3, 4), (5, 8)]
+        """
+        if not boundaries:
+            return []
+
+        ranges = []
+
+        # First two boundaries are singleton ranges
+        for i in range(min(2, len(boundaries))):
+            ranges.append((boundaries[i], boundaries[i]))
+
+        # Remaining boundaries fill gaps
+        if len(boundaries) > 2:
+            prev = boundaries[1] + 1  # Start after second boundary
+            for bound in boundaries[2:]:
+                ranges.append((prev, bound))
+                prev = bound + 1
+
+        return ranges
+
+    # GPU resource ranges: 4, 8, 9-16, 17-32, 33-64, 65-96, 97-128, 129-256, 257-320
+    GPU_RANGES = _make_ranges([4, 8, 16, 32, 64, 96, 128, 256, 320])
     GPU_OVERFLOW = ">320"
 
-    # Node resource ranges
-    NODE_RANGES = [
-        (1, 1), (2, 2), (3, 4), (5, 8), (9, 16), (17, 32),
-        (33, 64), (65, 128), (129, 256), (257, 512), (513, 1024), (1025, 2048)
-    ]
+    # Node resource ranges: 1, 2, 3-4, 5-8, ..., 1025-2048
+    NODE_RANGES = _make_ranges([1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048])
     NODE_OVERFLOW = ">2048"
 
-    # Core resource ranges
-    CORE_RANGES = [
-        (1, 1), (2, 2), (3, 4), (5, 8), (9, 16), (17, 32),
-        (33, 48), (49, 64), (65, 96), (97, 128)
-    ]
+    # Core resource ranges: 1, 2, 3-4, 5-8, ..., 97-128
+    CORE_RANGES = _make_ranges([1, 2, 4, 8, 16, 32, 48, 64, 96, 128])
     CORE_OVERFLOW = ">128"
 
     # Memory resource ranges (GB)
@@ -510,27 +538,16 @@ class JobQueries:
             >>> # CPU job durations by month
             >>> queries.job_durations('cpu', start_date, end_date, period='month')
         """
-        # Determine queues and hours field (machine-specific)
-        if resource_type == 'cpu':
-            queues = QueryConfig.get_cpu_queues(self.machine)
-            hours_field = JobCharged.cpu_hours
-        elif resource_type == 'gpu':
-            queues = QueryConfig.get_gpu_queues(self.machine)
-            hours_field = JobCharged.gpu_hours
-        else:  # 'all'
-            queues = QueryConfig.get_cpu_queues(self.machine) + QueryConfig.get_gpu_queues(self.machine)
-            hours_field = func.coalesce(JobCharged.cpu_hours, 0) + func.coalesce(JobCharged.gpu_hours, 0)
+        from .query_builders import ResourceTypeResolver, PeriodGrouper
+
+        # Resolve resource type to queues and hours field (machine-specific)
+        queues, hours_field = ResourceTypeResolver.resolve(resource_type, self.machine, JobCharged)
 
         # Get duration buckets
         duration_buckets = QueryConfig.get_duration_buckets()
 
-        # Period grouping
-        if period == "day":
-            period_func = func.date(Job.end)
-        elif period == "month":
-            period_func = func.strftime("%Y-%m", Job.end)
-        else:
-            raise ValueError("period must be 'day' or 'month'")
+        # Get period grouping function
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
 
         # Build query
         query = self.session.query(
@@ -561,8 +578,8 @@ class JobQueries:
     ) -> List[Dict[str, Any]]:
         """Get job memory-per-rank histogram by period.
 
-        Calculates memory per rank as memory_bytes / (mpiprocs * numnodes).
-        Filters out jobs where mpiprocs or numnodes is 0 or NULL.
+        Calculates memory per rank as memory_bytes / (mpiprocs * ompthreads * numnodes).
+        Filters out jobs where mpiprocs, ompthreads, numnodes, or memory is 0 or NULL.
 
         Args:
             resource_type: 'cpu' | 'gpu' - type of resources to filter
@@ -579,26 +596,16 @@ class JobQueries:
             >>> # GPU job memory-per-rank by month
             >>> queries.job_memory_per_rank('gpu', start_date, end_date, period='month')
         """
-        # Determine queues and hours field (machine-specific)
-        if resource_type == 'cpu':
-            queues = QueryConfig.get_cpu_queues(self.machine)
-            hours_field = JobCharged.cpu_hours
-        elif resource_type == 'gpu':
-            queues = QueryConfig.get_gpu_queues(self.machine)
-            hours_field = JobCharged.gpu_hours
-        else:
-            raise ValueError("resource_type must be 'cpu' or 'gpu'")
+        from .query_builders import ResourceTypeResolver, PeriodGrouper
+
+        # Resolve resource type to queues and hours field (machine-specific)
+        queues, hours_field = ResourceTypeResolver.resolve(resource_type, self.machine, JobCharged)
 
         # Get memory-per-rank buckets
         memory_buckets = QueryConfig.get_memory_per_rank_buckets()
 
-        # Period grouping
-        if period == "day":
-            period_func = func.date(Job.end)
-        elif period == "month":
-            period_func = func.strftime("%Y-%m", Job.end)
-        else:
-            raise ValueError("period must be 'day' or 'month'")
+        # Get period grouping function
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
 
         # Build query with CASE statements for each bucket
         query = self.session.query(
@@ -611,7 +618,7 @@ class JobQueries:
             Job.queue.in_(queues),
             Job.mpiprocs.isnot(None),   # Filter NULL
             Job.mpiprocs > 0,           # Filter zero (prevents division by zero)
-            Job.ompthreads.isnot(None), # Filter zero (prevents division by zero)
+            Job.ompthreads.isnot(None), # Filter NULL
             Job.ompthreads > 0,         # Filter zero (prevents division by zero)
             Job.numnodes.isnot(None),   # Filter NULL
             Job.numnodes > 0,           # Filter zero (prevents division by zero)
@@ -681,90 +688,117 @@ class JobQueries:
             end=end
         )
 
-    def usage_history(
-        self,
-        start: Optional[date] = None,
-        end: Optional[date] = None,
-        period: str = "day",
-    ) -> List[Dict[str, Any]]:
-        """Get usage history by time period.
+    def _build_date_filter(self, start: Optional[date], end: Optional[date]) -> List:
+        """Build date filter conditions for usage_history queries.
 
         Args:
-            start: Optional start date (inclusive) - filters on job end time
-            end: Optional end date (inclusive) - filters on job end time
-            period: Grouping period ('day' or 'month')
+            start: Optional start date (inclusive)
+            end: Optional end date (inclusive)
 
         Returns:
-            A list of dicts with usage history statistics for each period.
+            List of SQLAlchemy filter conditions
         """
-        cpu_queues = QueryConfig.get_cpu_queues(self.machine)
-        gpu_queues = QueryConfig.get_gpu_queues(self.machine)
-
-        # Determine period format string
-        if period == "day":
-            period_format = "%Y-%m-%d"
-        elif period == "month":
-            period_format = "%Y-%m"
-        else:
-            raise ValueError("Invalid period specified. Must be 'day' or 'month'.")
-
-        # Common subquery for date filtering
         date_filter = []
         if start:
             date_filter.append(Job.end >= datetime.combine(start, datetime.min.time()))
         if end:
             date_filter.append(Job.end <= datetime.combine(end, datetime.max.time()))
+        return date_filter
 
-        # 1. Total unique users per period
-        total_users_subquery = self.session.query(
+    def _usage_history_total_users(self, period_format: str, date_filter: List):
+        """Build subquery for total unique users per period.
+
+        Args:
+            period_format: strftime format string for period grouping
+            date_filter: List of filter conditions
+
+        Returns:
+            SQLAlchemy subquery for total users
+        """
+        return self.session.query(
             func.strftime(period_format, Job.end).label("period"),
             func.count(func.distinct(Job.user)).label("total_users")
         ).filter(*date_filter).group_by("period").subquery()
 
-        # 2. Total unique projects per period
-        total_projects_subquery = self.session.query(
+    def _usage_history_total_projects(self, period_format: str, date_filter: List):
+        """Build subquery for total unique projects per period.
+
+        Args:
+            period_format: strftime format string for period grouping
+            date_filter: List of filter conditions
+
+        Returns:
+            SQLAlchemy subquery for total projects
+        """
+        return self.session.query(
             func.strftime(period_format, Job.end).label("period"),
             func.count(func.distinct(Job.account)).label("total_projects")
         ).filter(*date_filter).group_by("period").subquery()
 
-        # 3. CPU stats per period
-        cpu_stats_subquery = self.session.query(
-            func.strftime(period_format, Job.end).label("period"),
-            func.count(func.distinct(Job.user)).label("cpu_users"),
-            func.count(func.distinct(Job.account)).label("cpu_projects"),
-            func.count(Job.id).label("cpu_jobs"),
-            func.sum(JobCharged.cpu_hours).label("cpu_hours")
-        ).join(JobCharged, Job.id == JobCharged.id).filter(Job.queue.in_(cpu_queues), *date_filter).group_by("period").subquery()
+    def _usage_history_resource_stats(
+        self, resource_type: str, period_format: str, date_filter: List
+    ):
+        """Build subquery for CPU or GPU stats per period.
 
-        # 4. GPU stats per period
-        gpu_stats_subquery = self.session.query(
-            func.strftime(period_format, Job.end).label("period"),
-            func.count(func.distinct(Job.user)).label("gpu_users"),
-            func.count(func.distinct(Job.account)).label("gpu_projects"),
-            func.count(Job.id).label("gpu_jobs"),
-            func.sum(JobCharged.gpu_hours).label("gpu_hours")
-        ).join(JobCharged, Job.id == JobCharged.id).filter(Job.queue.in_(gpu_queues), *date_filter).group_by("period").subquery()
+        Args:
+            resource_type: 'cpu' or 'gpu'
+            period_format: strftime format string for period grouping
+            date_filter: List of filter conditions
 
-        # Join all the subqueries
-        query = self.session.query(
-            total_users_subquery.c.period,
-            total_users_subquery.c.total_users,
-            total_projects_subquery.c.total_projects,
-            cpu_stats_subquery.c.cpu_users,
-            cpu_stats_subquery.c.cpu_projects,
-            cpu_stats_subquery.c.cpu_jobs,
-            cpu_stats_subquery.c.cpu_hours,
-            gpu_stats_subquery.c.gpu_users,
-            gpu_stats_subquery.c.gpu_projects,
-            gpu_stats_subquery.c.gpu_jobs,
-            gpu_stats_subquery.c.gpu_hours
+        Returns:
+            SQLAlchemy subquery for resource stats (users, projects, jobs, hours)
+        """
+        from .query_builders import ResourceTypeResolver
+
+        queues, hours_field = ResourceTypeResolver.resolve(
+            resource_type, self.machine, JobCharged
+        )
+
+        prefix = resource_type.lower()
+
+        return self.session.query(
+            func.strftime(period_format, Job.end).label("period"),
+            func.count(func.distinct(Job.user)).label(f"{prefix}_users"),
+            func.count(func.distinct(Job.account)).label(f"{prefix}_projects"),
+            func.count(Job.id).label(f"{prefix}_jobs"),
+            func.sum(hours_field).label(f"{prefix}_hours")
         ).join(
-            total_projects_subquery, total_users_subquery.c.period == total_projects_subquery.c.period
+            JobCharged, Job.id == JobCharged.id
+        ).filter(
+            Job.queue.in_(queues), *date_filter
+        ).group_by("period").subquery()
+
+    def _join_usage_history_results(self, users_sq, projects_sq, cpu_sq, gpu_sq):
+        """Join subqueries and format usage history results.
+
+        Args:
+            users_sq: Total users subquery
+            projects_sq: Total projects subquery
+            cpu_sq: CPU stats subquery
+            gpu_sq: GPU stats subquery
+
+        Returns:
+            List of formatted result dictionaries with usage history data
+        """
+        query = self.session.query(
+            users_sq.c.period,
+            users_sq.c.total_users,
+            projects_sq.c.total_projects,
+            cpu_sq.c.cpu_users,
+            cpu_sq.c.cpu_projects,
+            cpu_sq.c.cpu_jobs,
+            cpu_sq.c.cpu_hours,
+            gpu_sq.c.gpu_users,
+            gpu_sq.c.gpu_projects,
+            gpu_sq.c.gpu_jobs,
+            gpu_sq.c.gpu_hours
+        ).join(
+            projects_sq, users_sq.c.period == projects_sq.c.period
         ).outerjoin(
-            cpu_stats_subquery, total_users_subquery.c.period == cpu_stats_subquery.c.period
+            cpu_sq, users_sq.c.period == cpu_sq.c.period
         ).outerjoin(
-            gpu_stats_subquery, total_users_subquery.c.period == gpu_stats_subquery.c.period
-        ).order_by(total_users_subquery.c.period)
+            gpu_sq, users_sq.c.period == gpu_sq.c.period
+        ).order_by(users_sq.c.period)
 
         results = query.all()
 
@@ -784,6 +818,56 @@ class JobQueries:
             }
             for row in results
         ]
+
+    def usage_history(
+        self,
+        start: Optional[date] = None,
+        end: Optional[date] = None,
+        period: str = "day",
+    ) -> List[Dict[str, Any]]:
+        """Get usage history by time period.
+
+        This method coordinates 4 subqueries to gather comprehensive usage
+        statistics per period (day or month):
+        1. Total unique users across all queues
+        2. Total unique projects across all queues
+        3. CPU queue statistics (users, projects, jobs, hours)
+        4. GPU queue statistics (users, projects, jobs, hours)
+
+        Args:
+            start: Optional start date (inclusive) - filters on job end time
+            end: Optional end date (inclusive) - filters on job end time
+            period: Grouping period ('day' or 'month')
+
+        Returns:
+            List of dicts with usage history statistics for each period.
+            Each dict contains: Date, #-Users, #-Proj, #-CPU-Users, #-CPU-Proj,
+            #-CPU-Jobs, #-CPU-Hrs, #-GPU-Users, #-GPU-Proj, #-GPU-Jobs, #-GPU-Hrs
+
+        Raises:
+            ValueError: If period is not 'day' or 'month'
+        """
+        # Determine period format string
+        if period == "day":
+            period_format = "%Y-%m-%d"
+        elif period == "month":
+            period_format = "%Y-%m"
+        else:
+            raise ValueError("Invalid period specified. Must be 'day' or 'month'.")
+
+        # Build date filter once
+        date_filter = self._build_date_filter(start, end)
+
+        # Build 4 subqueries
+        total_users_sq = self._usage_history_total_users(period_format, date_filter)
+        total_projects_sq = self._usage_history_total_projects(period_format, date_filter)
+        cpu_stats_sq = self._usage_history_resource_stats('cpu', period_format, date_filter)
+        gpu_stats_sq = self._usage_history_resource_stats('gpu', period_format, date_filter)
+
+        # Join and format results
+        return self._join_usage_history_results(
+            total_users_sq, total_projects_sq, cpu_stats_sq, gpu_stats_sq
+        )
 
     def jobs_by_user(
         self,
@@ -1067,16 +1151,10 @@ class JobQueries:
         Returns:
             A list of dicts with 'period', 'user', 'account', and 'job_count' keys.
         """
-        if period == "day":
-            period_func = func.strftime("%Y-%m-%d", Job.end)
-        elif period == "month":
-            period_func = func.strftime("%Y-%m", Job.end)
-        elif period == "quarter":
-            # This is tricky with pure SQL in SQLite. We will get monthly data and aggregate.
-            # However, for job counts, we can just sum them up.
-            period_func = func.strftime("%Y-%m", Job.end)
-        else:
-            raise ValueError("Invalid period specified. Must be 'day', 'month', or 'quarter'.")
+        from .query_builders import PeriodGrouper
+
+        # Get period function (returns monthly for quarter, which will be aggregated later)
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
 
         query = self.session.query(
             period_func.label("period"),
@@ -1085,27 +1163,23 @@ class JobQueries:
             func.count(Job.id).label("job_count")
         )
 
-        if start:
-            query = query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
-        if end:
-            query = query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+        query = self._apply_date_filter(query, start, end)
 
         results = query.group_by("period", Job.user, Job.account).order_by("period", Job.user, Job.account).all()
 
+        # Convert results to list of dicts
+        monthly_data = [
+            {"period": row[0], "user": row[1], "account": row[2], "job_count": row[3]}
+            for row in results
+        ]
+
+        # If quarter period, aggregate monthly data to quarterly
         if period == "quarter":
-            quarterly_counts = {} # key: (YYYY-Q, user, account)
-            for row in results:
-                year, month = row.period.split('-')
-                quarter = (int(month) - 1) // 3 + 1
-                q_key = f"{year}-Q{quarter}"
+            return PeriodGrouper.aggregate_quarters(
+                monthly_data, 'job_count', grouping_fields=['user', 'account']
+            )
 
-                agg_key = (q_key, row.user, row.account)
-                quarterly_counts[agg_key] = quarterly_counts.get(agg_key, 0) + row.job_count
-
-            return [{"period": key[0], "user": key[1], "account": key[2], "job_count": value} for key, value in quarterly_counts.items()]
-
-
-        return [{"period": row[0], "user": row[1], "account": row[2], "job_count": row[3]} for row in results]
+        return monthly_data
 
     def unique_projects_by_period(
         self,
@@ -1123,50 +1197,31 @@ class JobQueries:
         Returns:
             A list of dicts with 'period' and 'project_count' keys.
         """
+        from .query_builders import PeriodGrouper
+
         if period == "quarter":
-            # For quarters, get monthly data and aggregate
+            # For quarters, get monthly distinct project data and aggregate
             monthly_query = self.session.query(
                 func.strftime("%Y-%m", Job.end).label("month"),
                 Job.account
             ).distinct()
 
-            if start:
-                monthly_query = monthly_query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
-            if end:
-                monthly_query = monthly_query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+            monthly_query = self._apply_date_filter(monthly_query, start, end)
 
             monthly_results = monthly_query.all()
 
-            quarterly_projects = {} # key: "YYYY-Q", value: set of projects
-            for month_str, project in monthly_results:
-                if not project or not month_str:
-                    continue
-                year, month = map(int, month_str.split('-'))
-                quarter = (month - 1) // 3 + 1
-                q_key = f"{year}-Q{quarter}"
-                if q_key not in quarterly_projects:
-                    quarterly_projects[q_key] = set()
-                quarterly_projects[q_key].add(project)
+            # Use PeriodGrouper to aggregate quarters from monthly distinct data
+            return PeriodGrouper.aggregate_quarters_distinct(monthly_results, 'project_count')
 
-            results = [{"period": key, "project_count": len(projects)} for key, projects in quarterly_projects.items()]
-            return sorted(results, key=lambda x: x['period'])
-
-        if period == "day":
-            period_func = func.strftime("%Y-%m-%d", Job.end)
-        elif period == "month":
-            period_func = func.strftime("%Y-%m", Job.end)
-        else:
-            raise ValueError("Invalid period specified. Must be 'day', 'month', or 'quarter'.")
+        # For day or month periods
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
 
         query = self.session.query(
             period_func.label("period"),
             func.count(func.distinct(Job.account)).label("project_count")
         )
 
-        if start:
-            query = query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
-        if end:
-            query = query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+        query = self._apply_date_filter(query, start, end)
 
         results = query.group_by("period").order_by("period").all()
 
@@ -1188,51 +1243,31 @@ class JobQueries:
         Returns:
             A list of dicts with 'period' and 'user_count' keys.
         """
+        from .query_builders import PeriodGrouper
+
         if period == "quarter":
-            # For quarters, get monthly data and aggregate
+            # For quarters, get monthly distinct user data and aggregate
             monthly_query = self.session.query(
                 func.strftime("%Y-%m", Job.end).label("month"),
                 Job.user
             ).distinct()
 
-            if start:
-                monthly_query = monthly_query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
-            if end:
-                monthly_query = monthly_query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+            monthly_query = self._apply_date_filter(monthly_query, start, end)
 
             monthly_results = monthly_query.all()
 
-            quarterly_users = {} # key: "YYYY-Q", value: set of users
-            for month_str, user in monthly_results:
-                if not user or not month_str:
-                    continue
-                year, month = map(int, month_str.split('-'))
-                quarter = (month - 1) // 3 + 1
-                q_key = f"{year}-Q{quarter}"
-                if q_key not in quarterly_users:
-                    quarterly_users[q_key] = set()
-                quarterly_users[q_key].add(user)
+            # Use PeriodGrouper to aggregate quarters from monthly distinct data
+            return PeriodGrouper.aggregate_quarters_distinct(monthly_results, 'user_count')
 
-            results = [{"period": key, "user_count": len(users)} for key, users in quarterly_users.items()]
-            return sorted(results, key=lambda x: x['period'])
-
-
-        if period == "day":
-            period_func = func.strftime("%Y-%m-%d", Job.end)
-        elif period == "month":
-            period_func = func.strftime("%Y-%m", Job.end)
-        else:
-            raise ValueError("Invalid period specified. Must be 'day', 'month', or 'quarter'.")
+        # For day or month periods
+        period_func = PeriodGrouper.get_period_func(period, Job.end)
 
         query = self.session.query(
             period_func.label("period"),
             func.count(func.distinct(Job.user)).label("user_count")
         )
 
-        if start:
-            query = query.filter(Job.end >= datetime.combine(start, datetime.min.time()))
-        if end:
-            query = query.filter(Job.end <= datetime.combine(end, datetime.max.time()))
+        query = self._apply_date_filter(query, start, end)
 
         results = query.group_by("period").order_by("period").all()
 

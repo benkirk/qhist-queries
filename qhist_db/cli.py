@@ -172,90 +172,81 @@ def unique_users(ctx):
 
 cli.add_command(history)
 
-# Resource report configurations
-RESOURCE_REPORTS = [
-    # Pie chart reports - Usage by group
-    ReportConfig(
-        command_name="pie-proj-cpu",
-        description="CPU usage by project (account)",
-        query_method="usage_by_group",
-        query_params={"resource_type": "cpu", "group_by": "account"},
-        filename_base="pie_proj_cpu",
-        columns=[
-            ColumnSpec("label", "Accounts", 15, "s"),
-            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
-            ColumnSpec("job_count", "Counts", 0, ""),
-        ]
-    ),
-    ReportConfig(
-        command_name="pie-user-gpu",
-        description="GPU usage by user",
-        query_method="usage_by_group",
-        query_params={"resource_type": "gpu", "group_by": "user"},
-        filename_base="pie_user_gpu",
-        columns=[
-            ColumnSpec("label", "User-ids", 15, "s"),
-            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
-            ColumnSpec("job_count", "Counts", 0, ""),
-        ]
-    ),
-    ReportConfig(
-        command_name="pie-user-cpu",
-        description="CPU usage by user",
-        query_method="usage_by_group",
-        query_params={"resource_type": "cpu", "group_by": "user"},
-        filename_base="pie_user_cpu",
-        columns=[
-            ColumnSpec("label", "User-ids", 15, "s"),
-            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
-            ColumnSpec("job_count", "Counts", 0, ""),
-        ]
-    ),
-    ReportConfig(
-        command_name="pie-proj-gpu",
-        description="GPU usage by project (account)",
-        query_method="usage_by_group",
-        query_params={"resource_type": "gpu", "group_by": "account"},
-        filename_base="pie_proj_gpu",
-        columns=[
-            ColumnSpec("label", "Accounts", 15, "s"),
-            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
-            ColumnSpec("job_count", "Counts", 0, ""),
-        ]
-    ),
-    ReportConfig(
-        command_name="pie-group-gpu",
-        description="GPU usage by account",
-        query_method="usage_by_group",
-        query_params={"resource_type": "gpu", "group_by": "account"},
-        filename_base="pie_group_gpu",
-        columns=[
-            ColumnSpec("label", "Accounts", 15, "s"),
-            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
-            ColumnSpec("job_count", "Counts", 0, ""),
-        ]
-    ),
-    ReportConfig(
-        command_name="pie-group-cpu",
-        description="CPU usage by account",
-        query_method="usage_by_group",
-        query_params={"resource_type": "cpu", "group_by": "account"},
-        filename_base="pie_group_cpu",
-        columns=[
-            ColumnSpec("label", "Accounts", 15, "s"),
-            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
-            ColumnSpec("job_count", "Counts", 0, ""),
-        ]
-    ),
 
-    # Duration reports
-    ReportConfig(
-        command_name="gpu-job-durations",
-        description="GPU job durations by period",
-        query_method="job_durations",
-        query_params={"resource_type": "gpu"},
-        filename_base="gpu_job_durations",
-        columns=[
+class ColumnSpecs:
+    """Factory for common column specifications.
+
+    Reduces duplication in RESOURCE_REPORTS by providing reusable
+    column spec patterns for different report types.
+    """
+
+    @staticmethod
+    def usage_counts(label: str = "User-ids", label_width: int = 15) -> List[ColumnSpec]:
+        """Standard usage/counts columns for pie charts.
+
+        Used by: pie-user-cpu, pie-user-gpu, pie-proj-cpu, pie-proj-gpu,
+                 pie-group-cpu, pie-group-gpu
+
+        Args:
+            label: Label for the first column (e.g., "User-ids", "Accounts")
+            label_width: Width for the label column (default 15)
+
+        Returns:
+            List of 3 ColumnSpec objects
+        """
+        return [
+            ColumnSpec("label", label, label_width, "s"),
+            ColumnSpec("usage_hours", "Usage", 15, ".1f"),
+            ColumnSpec("job_count", "Counts", 0, ""),
+        ]
+
+    @staticmethod
+    def range_waits(range_label: str) -> List[ColumnSpec]:
+        """Standard columns for wait time reports.
+
+        Used by: gpu-job-waits, cpu-job-waits, job-waits, memory-job-waits
+
+        Args:
+            range_label: Label for the range column (e.g., "GPUs", "Nodes", "Cores")
+
+        Returns:
+            List of 3 ColumnSpec objects
+        """
+        return [
+            ColumnSpec("range_label", range_label, 20, "s"),
+            ColumnSpec("avg_wait_hours", "AveWait-hrs", 12, ".4f"),
+            ColumnSpec("job_count", "#-Jobs", 0, ""),
+        ]
+
+    @staticmethod
+    def range_sizes(range_label: str) -> List[ColumnSpec]:
+        """Standard columns for job size reports.
+
+        Used by: gpu-job-sizes, cpu-job-sizes, job-sizes, memory-job-sizes
+
+        Args:
+            range_label: Label for the range column (e.g., "GPUs", "Nodes", "Cores")
+
+        Returns:
+            List of 4 ColumnSpec objects
+        """
+        return [
+            ColumnSpec("range_label", range_label, 20, "s"),
+            ColumnSpec("job_count", "#-Jobs", 12, ""),
+            ColumnSpec("user_count", "#-Users", 12, ""),
+            ColumnSpec("hours", "Cr-hrs", 0, ".1f"),
+        ]
+
+    @staticmethod
+    def duration_buckets() -> List[ColumnSpec]:
+        """Standard columns for duration histograms.
+
+        Used by: gpu-job-durations, cpu-job-durations
+
+        Returns:
+            List of 8 ColumnSpec objects
+        """
+        return [
             ColumnSpec("date", "Date", 20, "s"),
             ColumnSpec("<30s", "<30s", 12, ".1f"),
             ColumnSpec("30s-30m", "30s-30m", 12, ".1f"),
@@ -265,33 +256,17 @@ RESOURCE_REPORTS = [
             ColumnSpec("12-18h", "12-18h", 12, ".1f"),
             ColumnSpec(">18h", ">18h", 0, ".1f"),
         ]
-    ),
-    ReportConfig(
-        command_name="cpu-job-durations",
-        description="CPU job durations by period",
-        query_method="job_durations",
-        query_params={"resource_type": "cpu"},
-        filename_base="cpu_job_durations",
-        columns=[
-            ColumnSpec("date", "Date", 20, "s"),
-            ColumnSpec("<30s", "<30s", 12, ".1f"),
-            ColumnSpec("30s-30m", "30s-30m", 12, ".1f"),
-            ColumnSpec("30-60m", "30-60m", 12, ".1f"),
-            ColumnSpec("1-5h", "1-5h", 12, ".1f"),
-            ColumnSpec("5-12h", "5-12h", 12, ".1f"),
-            ColumnSpec("12-18h", "12-18h", 12, ".1f"),
-            ColumnSpec(">18h", ">18h", 0, ".1f"),
-        ]
-    ),
 
-    # Memory-per-rank histogram reports
-    ReportConfig(
-        command_name="cpu-job-memory-per-rank",
-        description="CPU job memory-per-rank histogram by period",
-        query_method="job_memory_per_rank",
-        query_params={"resource_type": "cpu"},
-        filename_base="cpu_job_memory_per_rank",
-        columns=[
+    @staticmethod
+    def memory_per_rank_buckets() -> List[ColumnSpec]:
+        """Standard columns for memory-per-rank histograms.
+
+        Used by: cpu-job-memory-per-rank, gpu-job-memory-per-rank
+
+        Returns:
+            List of 13 ColumnSpec objects
+        """
+        return [
             ColumnSpec("date", "Date", 20, "s"),
             ColumnSpec("<128MB", "<128MB", 12, ".1f"),
             ColumnSpec("128MB-512MB", "128MB-512MB", 14, ".1f"),
@@ -306,117 +281,17 @@ RESOURCE_REPORTS = [
             ColumnSpec("128-256GB", "128-256GB", 12, ".1f"),
             ColumnSpec(">256GB", ">256GB", 0, ".1f"),
         ]
-    ),
-    ReportConfig(
-        command_name="gpu-job-memory-per-rank",
-        description="GPU job memory-per-rank histogram by period",
-        query_method="job_memory_per_rank",
-        query_params={"resource_type": "gpu"},
-        filename_base="gpu_job_memory_per_rank",
-        columns=[
-            ColumnSpec("date", "Date", 20, "s"),
-            ColumnSpec("<128MB", "<128MB", 12, ".1f"),
-            ColumnSpec("128MB-512MB", "128MB-512MB", 14, ".1f"),
-            ColumnSpec("512MB-1GB", "512MB-1GB", 12, ".1f"),
-            ColumnSpec("1-2GB", "1-2GB", 12, ".1f"),
-            ColumnSpec("2-4GB", "2-4GB", 12, ".1f"),
-            ColumnSpec("4-8GB", "4-8GB", 12, ".1f"),
-            ColumnSpec("8-16GB", "8-16GB", 12, ".1f"),
-            ColumnSpec("16-32GB", "16-32GB", 12, ".1f"),
-            ColumnSpec("32-64GB", "32-64GB", 12, ".1f"),
-            ColumnSpec("64-128GB", "64-128GB", 12, ".1f"),
-            ColumnSpec("128-256GB", "128-256GB", 12, ".1f"),
-            ColumnSpec(">256GB", ">256GB", 0, ".1f"),
-        ]
-    ),
 
-    # Wait time reports
-    ReportConfig(
-        command_name="gpu-job-waits",
-        description="GPU job waits by GPU count",
-        query_method="job_waits_by_resource",
-        query_params={"resource_type": "gpu", "range_type": "gpu"},
-        filename_base="gpu_job_waits",
-        columns=[
-            ColumnSpec("range_label", "GPUs", 20, "s"),
-            ColumnSpec("avg_wait_hours", "AveWait-hrs", 12, ".4f"),
-            ColumnSpec("job_count", "#-Jobs", 0, ""),
-        ]
-    ),
-    ReportConfig(
-        command_name="cpu-job-waits",
-        description="CPU job waits by node count",
-        query_method="job_waits_by_resource",
-        query_params={"resource_type": "cpu", "range_type": "node"},
-        filename_base="cpu_job_waits",
-        columns=[
-            ColumnSpec("range_label", "Nodes", 20, "s"),
-            ColumnSpec("avg_wait_hours", "AveWait-hrs", 12, ".4f"),
-            ColumnSpec("job_count", "#-Jobs", 0, ""),
-        ]
-    ),
-    ReportConfig(
-        command_name="job-waits",
-        description="Job waits by core count",
-        query_method="job_waits_by_resource",
-        query_params={"resource_type": "all", "range_type": "core"},
-        filename_base="bycore_job_waits",
-        columns=[
-            ColumnSpec("range_label", "Cores", 20, "s"),
-            ColumnSpec("avg_wait_hours", "AveWait-hrs", 12, ".4f"),
-            ColumnSpec("job_count", "#-Jobs", 0, ""),
-        ]
-    ),
+    @staticmethod
+    def usage_history() -> List[ColumnSpec]:
+        """Standard columns for usage history report.
 
-    # Job size reports
-    ReportConfig(
-        command_name="gpu-job-sizes",
-        description="GPU job sizes by GPU count",
-        query_method="job_sizes_by_resource",
-        query_params={"resource_type": "gpu", "range_type": "gpu"},
-        filename_base="gpu_job_sizes",
-        columns=[
-            ColumnSpec("range_label", "GPUs", 20, "s"),
-            ColumnSpec("job_count", "#-Jobs", 12, ""),
-            ColumnSpec("user_count", "#-Users", 12, ""),
-            ColumnSpec("hours", "Cr-hrs", 0, ".1f"),
-        ]
-    ),
-    ReportConfig(
-        command_name="cpu-job-sizes",
-        description="CPU job sizes by node count",
-        query_method="job_sizes_by_resource",
-        query_params={"resource_type": "cpu", "range_type": "node"},
-        filename_base="cpu_job_sizes",
-        columns=[
-            ColumnSpec("range_label", "Nodes", 20, "s"),
-            ColumnSpec("job_count", "#-Jobs", 12, ""),
-            ColumnSpec("user_count", "#-Users", 12, ""),
-            ColumnSpec("hours", "Cr-hrs", 0, ".1f"),
-        ]
-    ),
-    ReportConfig(
-        command_name="job-sizes",
-        description="Job sizes by core count",
-        query_method="job_sizes_by_resource",
-        query_params={"resource_type": "all", "range_type": "core"},
-        filename_base="bycore_job_sizes",
-        columns=[
-            ColumnSpec("range_label", "Cores", 20, "s"),
-            ColumnSpec("job_count", "#-Jobs", 12, ""),
-            ColumnSpec("user_count", "#-Users", 12, ""),
-            ColumnSpec("hours", "Cr-hrs", 0, ".1f"),
-        ]
-    ),
+        Used by: usage-history
 
-    # Usage history report
-    ReportConfig(
-        command_name="usage-history",
-        description="Usage history by period",
-        query_method="usage_history",
-        query_params={},
-        filename_base="usage_history",
-        columns=[
+        Returns:
+            List of 11 ColumnSpec objects
+        """
+        return [
             ColumnSpec("Date", "Date", 18, "s"),
             ColumnSpec("#-Users", "#-Users", 12, ""),
             ColumnSpec("#-Proj", "#-Proj", 8, ""),
@@ -429,20 +304,166 @@ RESOURCE_REPORTS = [
             ColumnSpec("#-GPU-Jobs", "#-GPU-Jobs", 13, ""),
             ColumnSpec("#-GPU-Hrs", "#-GPU-Hrs", 0, ".1f"),
         ]
+
+
+# Resource report configurations
+RESOURCE_REPORTS = [
+    # Pie chart reports - Usage by group
+    ReportConfig(
+        command_name="pie-proj-cpu",
+        description="CPU usage by project (account)",
+        query_method="usage_by_group",
+        query_params={"resource_type": "cpu", "group_by": "account"},
+        filename_base="pie_proj_cpu",
+        columns=ColumnSpecs.usage_counts(label="Accounts")
+    ),
+    ReportConfig(
+        command_name="pie-user-gpu",
+        description="GPU usage by user",
+        query_method="usage_by_group",
+        query_params={"resource_type": "gpu", "group_by": "user"},
+        filename_base="pie_user_gpu",
+        columns=ColumnSpecs.usage_counts(label="User-ids")
+    ),
+    ReportConfig(
+        command_name="pie-user-cpu",
+        description="CPU usage by user",
+        query_method="usage_by_group",
+        query_params={"resource_type": "cpu", "group_by": "user"},
+        filename_base="pie_user_cpu",
+        columns=ColumnSpecs.usage_counts(label="User-ids")
+    ),
+    ReportConfig(
+        command_name="pie-proj-gpu",
+        description="GPU usage by project (account)",
+        query_method="usage_by_group",
+        query_params={"resource_type": "gpu", "group_by": "account"},
+        filename_base="pie_proj_gpu",
+        columns=ColumnSpecs.usage_counts(label="Accounts")
+    ),
+    ReportConfig(
+        command_name="pie-group-gpu",
+        description="GPU usage by account",
+        query_method="usage_by_group",
+        query_params={"resource_type": "gpu", "group_by": "account"},
+        filename_base="pie_group_gpu",
+        columns=ColumnSpecs.usage_counts(label="Accounts")
+    ),
+    ReportConfig(
+        command_name="pie-group-cpu",
+        description="CPU usage by account",
+        query_method="usage_by_group",
+        query_params={"resource_type": "cpu", "group_by": "account"},
+        filename_base="pie_group_cpu",
+        columns=ColumnSpecs.usage_counts(label="Accounts")
     ),
 
-    # Memory-based reports (NEW)
+    # Duration reports
+    ReportConfig(
+        command_name="gpu-job-durations",
+        description="GPU job durations by period",
+        query_method="job_durations",
+        query_params={"resource_type": "gpu"},
+        filename_base="gpu_job_durations",
+        columns=ColumnSpecs.duration_buckets()
+    ),
+    ReportConfig(
+        command_name="cpu-job-durations",
+        description="CPU job durations by period",
+        query_method="job_durations",
+        query_params={"resource_type": "cpu"},
+        filename_base="cpu_job_durations",
+        columns=ColumnSpecs.duration_buckets()
+    ),
+
+    # Memory-per-rank histogram reports
+    ReportConfig(
+        command_name="cpu-job-memory-per-rank",
+        description="CPU job memory-per-rank histogram by period",
+        query_method="job_memory_per_rank",
+        query_params={"resource_type": "cpu"},
+        filename_base="cpu_job_memory_per_rank",
+        columns=ColumnSpecs.memory_per_rank_buckets()
+    ),
+    ReportConfig(
+        command_name="gpu-job-memory-per-rank",
+        description="GPU job memory-per-rank histogram by period",
+        query_method="job_memory_per_rank",
+        query_params={"resource_type": "gpu"},
+        filename_base="gpu_job_memory_per_rank",
+        columns=ColumnSpecs.memory_per_rank_buckets()
+    ),
+
+    # Wait time reports
+    ReportConfig(
+        command_name="gpu-job-waits",
+        description="GPU job waits by GPU count",
+        query_method="job_waits_by_resource",
+        query_params={"resource_type": "gpu", "range_type": "gpu"},
+        filename_base="gpu_job_waits",
+        columns=ColumnSpecs.range_waits("GPUs")
+    ),
+    ReportConfig(
+        command_name="cpu-job-waits",
+        description="CPU job waits by node count",
+        query_method="job_waits_by_resource",
+        query_params={"resource_type": "cpu", "range_type": "node"},
+        filename_base="cpu_job_waits",
+        columns=ColumnSpecs.range_waits("Nodes")
+    ),
+    ReportConfig(
+        command_name="job-waits",
+        description="Job waits by core count",
+        query_method="job_waits_by_resource",
+        query_params={"resource_type": "all", "range_type": "core"},
+        filename_base="bycore_job_waits",
+        columns=ColumnSpecs.range_waits("Cores")
+    ),
+
+    # Job size reports
+    ReportConfig(
+        command_name="gpu-job-sizes",
+        description="GPU job sizes by GPU count",
+        query_method="job_sizes_by_resource",
+        query_params={"resource_type": "gpu", "range_type": "gpu"},
+        filename_base="gpu_job_sizes",
+        columns=ColumnSpecs.range_sizes("GPUs")
+    ),
+    ReportConfig(
+        command_name="cpu-job-sizes",
+        description="CPU job sizes by node count",
+        query_method="job_sizes_by_resource",
+        query_params={"resource_type": "cpu", "range_type": "node"},
+        filename_base="cpu_job_sizes",
+        columns=ColumnSpecs.range_sizes("Nodes")
+    ),
+    ReportConfig(
+        command_name="job-sizes",
+        description="Job sizes by core count",
+        query_method="job_sizes_by_resource",
+        query_params={"resource_type": "all", "range_type": "core"},
+        filename_base="bycore_job_sizes",
+        columns=ColumnSpecs.range_sizes("Cores")
+    ),
+
+    # Usage history report
+    ReportConfig(
+        command_name="usage-history",
+        description="Usage history by period",
+        query_method="usage_history",
+        query_params={},
+        filename_base="usage_history",
+        columns=ColumnSpecs.usage_history()
+    ),
+
+    # Memory-based reports
     ReportConfig(
         command_name="memory-job-waits",
         description="Job waits by memory requirement",
         query_method="memory_job_waits",
         query_params={},
         filename_base="memory_job_waits",
-        columns=[
-            ColumnSpec("range_label", "Memory(GB)", 20, "s"),
-            ColumnSpec("avg_wait_hours", "AveWait-hrs", 12, ".4f"),
-            ColumnSpec("job_count", "#-Jobs", 0, ""),
-        ]
+        columns=ColumnSpecs.range_waits("Memory(GB)")
     ),
     ReportConfig(
         command_name="memory-job-sizes",
@@ -450,12 +471,7 @@ RESOURCE_REPORTS = [
         query_method="memory_job_sizes",
         query_params={},
         filename_base="memory_job_sizes",
-        columns=[
-            ColumnSpec("range_label", "Memory(GB)", 20, "s"),
-            ColumnSpec("job_count", "#-Jobs", 12, ""),
-            ColumnSpec("user_count", "#-Users", 12, ""),
-            ColumnSpec("hours", "Cr-hrs", 0, ".1f"),
-        ]
+        columns=ColumnSpecs.range_sizes("Memory(GB)")
     ),
 ]
 
